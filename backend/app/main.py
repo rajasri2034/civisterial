@@ -12,13 +12,14 @@ from app.config import ensure_isolated_temp_dir, settings
 from app.gemini_service import analyze_with_gemini, validate_image_confirmation
 from app.parser_worker import run_isolated_parser
 from app.redactor import redact_extracted_pages
-from app.schemas import AnalyzeUploadResponse
+from app.schemas import AnalyzeUploadResponse, VerifiedDocumentAnalysis
 from app.security import (
     RequestContextAndSecurityMiddleware,
     detect_file_type,
     enforce_streaming_body_limit,
     sweep_temp_dir_files,
 )
+from app.verification_engine import verify_analysis_items
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -87,7 +88,6 @@ async def analyze_document(request: Request) -> AnalyzeUploadResponse:
             request, max_bytes=settings.MAX_UPLOAD_BYTES + 65536
         )
 
-        # Allow 1 file ('file') and 1 optional declaration field ('image_confirmation')
         form = await request.form(max_files=1, max_fields=2)
         items = list(form.multi_items())
 
@@ -117,12 +117,11 @@ async def analyze_document(request: Request) -> AnalyzeUploadResponse:
         file_type = detect_file_type(raw_bytes[:16], uploaded_file.content_type)
         image_confirmation_raw = other_fields.get("image_confirmation")
 
-        # Initial parse checks structure and page types before deciding whether image bytes may be extracted
         parsed = await run_isolated_parser(
             raw_bytes=raw_bytes,
             file_type=file_type,
             request=request,
-            extract_image_page_bytes=False,
+            extract_image_page_bytes=bool(image_confirmation_raw and image_confirmation_raw.strip()),
         )
 
         has_image_content = bool(parsed["has_image_based_content"])
@@ -131,27 +130,24 @@ async def analyze_document(request: Request) -> AnalyzeUploadResponse:
             image_confirmation_raw=image_confirmation_raw,
         )
 
-        # If image content is present and explicitly confirmed as public/synthetic, extract image bytes
-        if has_image_content and image_confirmed:
-            parsed = await run_isolated_parser(
-                raw_bytes=raw_bytes,
-                file_type=file_type,
-                request=request,
-                extract_image_page_bytes=True,
-            )
-
         safe_pages = redact_extracted_pages(parsed["pages"])
-        # Preserve confirmed image_bytes in memory for Gemini inline parts only (never serialized in response)
         for idx, page_dict in enumerate(safe_pages):
             if parsed["pages"][idx].get("image_bytes"):
                 page_dict["image_bytes"] = parsed["pages"][idx]["image_bytes"]
                 page_dict["image_mime_type"] = parsed["pages"][idx].get("image_mime_type")
 
-        analysis = await analyze_with_gemini(
+        raw_analysis = await analyze_with_gemini(
             redacted_pages=safe_pages,
             has_image_content=has_image_content,
             image_confirmed=image_confirmed,
         )
+
+        verified_dict = verify_analysis_items(
+            raw_analysis.model_dump(),
+            redacted_pages=safe_pages,
+            has_image_content=has_image_content,
+        )
+        verified_analysis = VerifiedDocumentAnalysis.model_validate(verified_dict)
 
         request_id = getattr(request.state, "request_id", "unknown")
         return AnalyzeUploadResponse(
@@ -161,7 +157,7 @@ async def analyze_document(request: Request) -> AnalyzeUploadResponse:
             has_image_based_content=has_image_content,
             image_confirmation_provided=image_confirmed,
             pages=safe_pages,
-            analysis=analysis,
+            analysis=verified_analysis,
         )
     finally:
         if uploaded_file is not None:
