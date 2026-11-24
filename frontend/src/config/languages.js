@@ -1,5 +1,7 @@
+import { apiUrl } from "./api.js";
+
 export async function fetchSupportedLanguages() {
-  const res = await fetch("/api/languages");
+  const res = await fetch(apiUrl("/api/languages"));
   if (!res.ok) {
     throw new Error("Unable to load supported languages from the server.");
   }

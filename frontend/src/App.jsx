@@ -11,7 +11,7 @@ export function App() {
   const [documentLanguage, setDocumentLanguage] = useState("auto");
   const [explanationLanguage, setExplanationLanguage] = useState("en");
 
-  // Strictly in-memory state only (never persisted to localStorage or sessionStorage)
+  // Strictly in-memory React state only (never persisted to browser storage)
   const [analysisResult, setAnalysisResult] = useState(null);
   const [checkedTasks, setCheckedTasks] = useState({});
 

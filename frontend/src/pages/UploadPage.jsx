@@ -1,5 +1,6 @@
-import React, { useRef, useState } from "react";
-import { LanguageSelector } from "../components/LanguageSelector";
+import React, { useEffect, useRef, useState } from "react";
+import { LanguageSelector } from "../components/LanguageSelector.jsx";
+import { apiUrl, mapFriendlyApiError } from "../config/api.js";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = new Set(["application/pdf", "image/png", "image/jpeg"]);
@@ -22,6 +23,16 @@ export function UploadPage({
 
   const abortRef = useRef(null);
   const errorSummaryRef = useRef(null);
+
+  // Abort any in-flight request if UploadPage unmounts
+  useEffect(() => {
+    return () => {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+    };
+  }, []);
 
   const reportErrors = (errs) => {
     setErrors(errs);
@@ -47,7 +58,7 @@ export function UploadPage({
         issues.push("The selected file must be a PDF, PNG, or JPEG.");
       }
       if (file.size === 0) {
-        issues.push("The selected file is empty.");
+        issues.push("This document does not contain enough readable information for reliable analysis.");
       } else if (file.size > MAX_BYTES) {
         issues.push("The selected file must be smaller than 10 MB.");
       }
@@ -93,9 +104,11 @@ export function UploadPage({
       abortRef.current.abort();
       abortRef.current = null;
     }
+    setSelectedFile(null);
+    setInspection(null);
     setStage("idle");
     setAwaitingImageConfirm(false);
-    setStatusMessage("Analysis cancelled.");
+    setStatusMessage("Analysis cancelled. No results were kept.");
     onCancelWorkflow();
   };
 
@@ -118,32 +131,44 @@ export function UploadPage({
         );
       }
 
-      const analyzeRes = await fetch("/api/analyze", {
+      const analyzeRes = await fetch(apiUrl("/api/analyze"), {
         method: "POST",
         body: formData,
         signal: controller.signal,
       });
+
+      if (controller.signal.aborted) {
+        return;
+      }
 
       setStage("checking");
       setStatusMessage("Stage 3 of 3: Checking quotations against the document...");
 
       if (!analyzeRes.ok) {
         const errBody = await analyzeRes.json().catch(() => ({}));
-        reportErrors([errBody.error || "Unable to analyse the uploaded document."]);
+        reportErrors([mapFriendlyApiError(analyzeRes.status, errBody.error)]);
         return;
       }
 
       const data = await analyzeRes.json();
+      if (controller.signal.aborted) {
+        return;
+      }
+
       setStage("idle");
       setStatusMessage("Analysis complete.");
       onAnalysisComplete(data);
     } catch (err) {
-      if (err?.name === "AbortError") {
+      if (err?.name === "AbortError" || controller.signal.aborted) {
         return;
       }
-      reportErrors(["A network error occurred while analysing the document."]);
+      reportErrors([
+        "Unable to reach the document analysis service. Please check your connection and try again.",
+      ]);
     } finally {
-      abortRef.current = null;
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
     }
   };
 
@@ -168,19 +193,39 @@ export function UploadPage({
       const formData = new FormData();
       formData.append("file", selectedFile);
 
-      const inspectRes = await fetch("/api/inspect", {
+      const inspectRes = await fetch(apiUrl("/api/inspect"), {
         method: "POST",
         body: formData,
         signal: controller.signal,
       });
 
+      if (controller.signal.aborted) {
+        return;
+      }
+
       if (!inspectRes.ok) {
         const errBody = await inspectRes.json().catch(() => ({}));
-        reportErrors([errBody.error || "Unable to read the uploaded file."]);
+        reportErrors([mapFriendlyApiError(inspectRes.status, errBody.error)]);
         return;
       }
 
       const inspected = await inspectRes.json();
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      // Check for empty / too little readable text when no image pages exist
+      const totalChars = (inspected.pages || []).reduce(
+        (acc, p) => acc + (p.char_count || 0),
+        0
+      );
+      if (!inspected.has_image_based_content && totalChars < 15) {
+        reportErrors([
+          "This document does not contain enough readable information for reliable analysis.",
+        ]);
+        return;
+      }
+
       setInspection(inspected);
 
       if (inspected.has_image_based_content) {
@@ -194,10 +239,16 @@ export function UploadPage({
 
       await runFullAnalysis(selectedFile, false);
     } catch (err) {
-      if (err?.name === "AbortError") {
+      if (err?.name === "AbortError" || controller.signal.aborted) {
         return;
       }
-      reportErrors(["A network error occurred while reading the document."]);
+      reportErrors([
+        "Unable to reach the document analysis service. Please check your connection and try again.",
+      ]);
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
     }
   };
 
@@ -339,3 +390,5 @@ export function UploadPage({
     </div>
   );
 }
+
+export default UploadPage;

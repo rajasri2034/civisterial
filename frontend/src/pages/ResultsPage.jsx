@@ -1,7 +1,18 @@
 import React, { useState } from "react";
-import { QuotationStatusBadge } from "../components/QuotationStatusBadge";
-import { getUiCopyForLanguage } from "../config/languages";
-import { buildExportText, downloadTextFile } from "../utils/exportTxt";
+import { QuotationStatusBadge } from "../components/QuotationStatusBadge.jsx";
+import { getUiCopyForLanguage } from "../config/languages.js";
+import { buildExportText, downloadTextFile } from "../utils/exportTxt.js";
+
+function formatRedactionCounts(counts) {
+  if (!counts || typeof counts !== "object") {
+    return "No personal identifiers detected";
+  }
+  const entries = Object.entries(counts).filter(([, count]) => Number(count) > 0);
+  if (entries.length === 0) {
+    return "No personal identifiers detected";
+  }
+  return entries.map(([type, count]) => `${type}: ${count}`).join(", ");
+}
 
 export function ResultsPage({
   result,
@@ -15,6 +26,36 @@ export function ResultsPage({
 
   const { analysis } = result;
   const copy = getUiCopyForLanguage(result.explanation_language);
+
+  // Strict requirement: if readability is unreadable, show no extracted content
+  if (analysis.readability === "unreadable") {
+    return (
+      <div dir={result.explanation_direction} lang={result.explanation_language}>
+        <h1>Document analysis results</h1>
+
+        <div className="gov-error-summary" role="alert">
+          <h2 className="gov-error-summary__title">Document could not be read</h2>
+          <p style={{ marginBottom: 0 }}>
+            We couldn&apos;t read this document clearly. Please upload a higher-quality image or PDF.
+          </p>
+        </div>
+
+        <div className="no-print" style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
+          <button type="button" className="gov-button" onClick={onStartNewAnalysis}>
+            Upload a clearer document
+          </button>
+          <button
+            type="button"
+            className="gov-button gov-button--warning"
+            onClick={onDeleteResults}
+          >
+            {copy.deleteMyResults}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const completedCount = analysis.action_steps.filter((_, idx) => Boolean(checkedTasks[idx])).length;
 
   const formatPage = (page, actualPage) => {
@@ -140,6 +181,12 @@ export function ResultsPage({
         </button>
       </div>
 
+      {analysis.readability === "poor" && (
+        <div className="gov-warning-banner" role="alert">
+          <strong>Low readability warning:</strong> Parts of this document were difficult to read. Check every detail against your original document.
+        </div>
+      )}
+
       {analysis.warnings.length > 0 && (
         <div className="gov-warning-banner" role="region" aria-label="Document warnings">
           <h2 style={{ marginTop: 0, fontSize: "1.15rem" }}>Important notices</h2>
@@ -149,6 +196,55 @@ export function ResultsPage({
             ))}
           </ul>
         </div>
+      )}
+
+      {/* Per-page redaction status & image redaction warning */}
+      {Array.isArray(result.pages) && result.pages.length > 0 && (
+        <section aria-labelledby="redaction-summary-heading" style={{ marginBottom: "1.5rem" }}>
+          <h2 id="redaction-summary-heading" style={{ fontSize: "1.2rem" }}>
+            Privacy &amp; redaction status per page
+          </h2>
+          {result.has_image_based_content && (
+            <div className="gov-warning-banner" role="note">
+              <strong>Images and image-based pages are not redacted.</strong> Only text layers in PDF documents are masked before AI analysis.
+            </div>
+          )}
+          <div className="gov-table-wrap">
+            <table className="gov-table">
+              <thead>
+                <tr>
+                  <th scope="col">Page</th>
+                  <th scope="col">Page type</th>
+                  <th scope="col">Redaction notice &amp; masked item counts</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.pages.map((p) => (
+                  <tr key={p.page_number}>
+                    <td>Page {p.page_number}</td>
+                    <td>{p.kind === "image_based" ? "Image / scanned page" : p.kind === "text" ? "Text page" : "Empty page"}</td>
+                    <td>
+                      {p.kind === "image_based" ? (
+                        <span className="gov-tag gov-tag--amber">
+                          Not redacted — Images and image-based pages are not redacted
+                        </span>
+                      ) : p.kind === "text" ? (
+                        <>
+                          <span className="gov-tag gov-tag--green">
+                            {p.redaction_status === "redacted" ? "Identifiers masked" : "Checked"}
+                          </span>{" "}
+                          <span>{formatRedactionCounts(p.redaction_counts)}</span>
+                        </>
+                      ) : (
+                        <span>No text on page</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
 
       <div role="tablist" aria-label="Analysis sections" className="gov-tabs__list no-print">
@@ -599,3 +695,5 @@ export function ResultsPage({
     </div>
   );
 }
+
+export default ResultsPage;
