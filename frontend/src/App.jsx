@@ -1,43 +1,170 @@
-import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
-import { SkipLink, Header, PhaseBanner, Footer } from './components';
-import DesignSystemPage from './pages/DesignSystemPage';
+import React, { useEffect, useRef, useState } from "react";
+import { fetchSupportedLanguages } from "./config/languages";
+import { LandingPage } from "./pages/LandingPage";
+import { ResultsPage } from "./pages/ResultsPage";
+import { UploadPage } from "./pages/UploadPage";
 
-function PlaceholderHome() {
-  return (
-    <div className="space-y-4">
-      <h1 className="text-3xl font-bold">Civisterial</h1>
-      <p>
-        Task 1 scaffold is running. Review all design system components on the{' '}
-        <Link to="/design" className="text-gov-link underline">
-          /design page
-        </Link>
-        .
-      </p>
-    </div>
-  );
-}
+export function App() {
+  const [route, setRoute] = useState("landing");
+  const [languages, setLanguages] = useState([]);
+  const [langLoadError, setLangLoadError] = useState(null);
+  const [documentLanguage, setDocumentLanguage] = useState("auto");
+  const [explanationLanguage, setExplanationLanguage] = useState("en");
 
-export default function App() {
+  // Strictly in-memory state only (never persisted to localStorage or sessionStorage)
+  const [analysisResult, setAnalysisResult] = useState(null);
+  const [checkedTasks, setCheckedTasks] = useState({});
+
+  const mainHeadingContainerRef = useRef(null);
+
+  useEffect(() => {
+    let active = true;
+    fetchSupportedLanguages()
+      .then((list) => {
+        if (active) setLanguages(list);
+      })
+      .catch((err) => {
+        if (active) setLangLoadError(err.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const clearOnUnload = () => {
+      setAnalysisResult(null);
+      setCheckedTasks({});
+    };
+    window.addEventListener("beforeunload", clearOnUnload);
+    return () => window.removeEventListener("beforeunload", clearOnUnload);
+  }, []);
+
+  const navigateTo = (nextRoute) => {
+    setRoute(nextRoute);
+    requestAnimationFrame(() => {
+      mainHeadingContainerRef.current?.focus();
+    });
+  };
+
+  const clearAllWorkflowState = (targetRoute) => {
+    setAnalysisResult(null);
+    setCheckedTasks({});
+    navigateTo(targetRoute);
+  };
+
+  const handleAnalysisComplete = (result) => {
+    setAnalysisResult(result);
+    setCheckedTasks({});
+    navigateTo("results");
+  };
+
+  const handleToggleTask = (index) => {
+    setCheckedTasks((prev) => ({
+      ...prev,
+      [index]: !prev[index],
+    }));
+  };
+
   return (
-    <BrowserRouter>
-      <div className="min-h-screen flex flex-col bg-white text-gov-text">
-        <SkipLink />
-        <Header />
-        <PhaseBanner />
-        <main
-          id="main-content"
-          tabIndex={-1}
-          className="flex-1 w-full max-w-gov mx-auto px-4 py-8"
-        >
-          <Routes>
-            <Route path="/" element={<PlaceholderHome />} />
-            <Route path="/design" element={<DesignSystemPage />} />
-            <Route path="*" element={<Navigate to="/design" replace />} />
-          </Routes>
-        </main>
-        <Footer />
+    <>
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+
+      <header className="gov-header">
+        <div className="gov-header__inner">
+          <a
+            href="#top"
+            className="gov-header__brand"
+            onClick={(e) => {
+              e.preventDefault();
+              clearAllWorkflowState("landing");
+            }}
+          >
+            Civisterial
+          </a>
+          <nav className="gov-header__nav" aria-label="Primary navigation">
+            <a
+              href="#home"
+              className="gov-header__link"
+              onClick={(e) => {
+                e.preventDefault();
+                clearAllWorkflowState("landing");
+              }}
+            >
+              Home
+            </a>
+            <a
+              href="#upload"
+              className="gov-header__link"
+              onClick={(e) => {
+                e.preventDefault();
+                clearAllWorkflowState("upload");
+              }}
+            >
+              Upload document
+            </a>
+          </nav>
+        </div>
+      </header>
+
+      <div className="gov-phase-banner">
+        <span className="gov-tag gov-tag--blue">BETA</span>
+        <span>
+          Plain-language administrative guidance only — not legal advice. Nothing is stored by Civisterial.
+        </span>
       </div>
-    </BrowserRouter>
+
+      <main
+        id="main-content"
+        ref={mainHeadingContainerRef}
+        className="gov-main"
+        tabIndex={-1}
+      >
+        {langLoadError && (
+          <div className="gov-error-summary" role="alert">
+            <h2 className="gov-error-summary__title">Service configuration issue</h2>
+            <p>{langLoadError}</p>
+          </div>
+        )}
+
+        {route === "landing" && (
+          <LandingPage onStart={() => clearAllWorkflowState("upload")} />
+        )}
+
+        {route === "upload" && (
+          <UploadPage
+            languages={languages}
+            documentLanguage={documentLanguage}
+            explanationLanguage={explanationLanguage}
+            onDocumentLanguageChange={setDocumentLanguage}
+            onExplanationLanguageChange={setExplanationLanguage}
+            onAnalysisComplete={handleAnalysisComplete}
+            onCancelWorkflow={() => clearAllWorkflowState("landing")}
+          />
+        )}
+
+        {route === "results" && analysisResult && (
+          <ResultsPage
+            result={analysisResult}
+            checkedTasks={checkedTasks}
+            onToggleTask={handleToggleTask}
+            onDeleteResults={() => clearAllWorkflowState("landing")}
+            onStartNewAnalysis={() => clearAllWorkflowState("upload")}
+          />
+        )}
+      </main>
+
+      <footer className="gov-footer">
+        <div className="gov-footer__inner">
+          <p style={{ marginBottom: 0 }}>
+            Civisterial provides plain-language administrative guidance, not legal advice. All results remain in browser memory only and are cleared when you leave.
+          </p>
+        </div>
+      </footer>
+    </>
   );
 }
+
+export default App;

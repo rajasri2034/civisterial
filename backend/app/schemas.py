@@ -31,7 +31,19 @@ class PageExtraction(BaseModel):
     notice: str | None = None
 
 
-# --- Gemini Extraction Models (extra="forbid" ensures AI cannot set quotation_status or claim_check) ---
+class InspectUploadResponse(BaseModel):
+    request_id: str
+    file_type: Literal["pdf", "png", "jpeg"]
+    page_count: int
+    has_image_based_content: bool
+    requires_image_confirmation: bool
+    detected_language_code: str
+    detected_language_label: str
+    language_detection_uncertain: bool
+    pages: list[PageExtraction]
+
+
+# --- Gemini Extraction Models ---
 
 
 class DocumentMetadataField(BaseModel):
@@ -135,8 +147,6 @@ class FeeItem(BaseModel):
 
 
 class GeminiDocumentAnalysis(BaseModel):
-    """Schema passed to Gemini. Returns NO quotation_status and NO claim_check."""
-
     model_config = ConfigDict(extra="forbid")
 
     readability: Literal["good", "poor", "unreadable"]
@@ -151,9 +161,6 @@ class GeminiDocumentAnalysis(BaseModel):
     fees: list[FeeItem] = Field(default_factory=list)
     missing_information: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
-
-
-# --- Deterministic Verification Output Models (populated solely by verification_engine.py) ---
 
 
 class VerificationMetadataMixin(BaseModel):
@@ -213,6 +220,12 @@ class AnalyzeUploadResponse(BaseModel):
     page_count: int
     has_image_based_content: bool
     image_confirmation_provided: bool
+    detected_language_code: str
+    detected_language_label: str
+    language_detection_uncertain: bool
+    document_language: str
+    explanation_language: str
+    explanation_direction: Literal["ltr", "rtl"]
     pages: list[PageExtraction]
     analysis: VerifiedDocumentAnalysis
     disclaimer: str = (

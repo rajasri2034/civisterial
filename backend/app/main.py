@@ -9,10 +9,19 @@ from slowapi.util import get_remote_address
 from starlette.formparsers import MultiPartParser
 
 from app.config import ensure_isolated_temp_dir, settings
-from app.gemini_service import analyze_with_gemini, validate_image_confirmation
+from app.gemini_service import (
+    analyze_with_gemini,
+    validate_image_confirmation,
+    validate_language_selection,
+)
+from app.languages import SUPPORTED_LANGUAGES, detect_document_language
 from app.parser_worker import run_isolated_parser
 from app.redactor import redact_extracted_pages
-from app.schemas import AnalyzeUploadResponse, VerifiedDocumentAnalysis
+from app.schemas import (
+    AnalyzeUploadResponse,
+    InspectUploadResponse,
+    VerifiedDocumentAnalysis,
+)
 from app.security import (
     RequestContextAndSecurityMiddleware,
     detect_file_type,
@@ -76,6 +85,80 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "service": "civisterial"}
 
 
+@app.get("/api/languages")
+async def list_languages() -> dict[str, object]:
+    return {"languages": SUPPORTED_LANGUAGES}
+
+
+@app.post("/api/inspect", response_model=InspectUploadResponse)
+@limiter.limit(settings.RATE_LIMIT_ANALYZE)
+async def inspect_document(request: Request) -> InspectUploadResponse:
+    """Local-only pre-check: validates file, redacts text, detects language, and flags image pages
+    without sending anything to Gemini.
+    """
+    tmp_dir = ensure_isolated_temp_dir()
+    before_tmp = {p.name for p in tmp_dir.iterdir()}
+    uploaded_file: UploadFile | None = None
+
+    try:
+        await enforce_streaming_body_limit(
+            request, max_bytes=settings.MAX_UPLOAD_BYTES + 65536
+        )
+
+        form = await request.form(max_files=1, max_fields=1)
+        items = list(form.multi_items())
+        if len(items) != 1 or items[0][0] != "file" or not hasattr(items[0][1], "read"):
+            raise HTTPException(
+                status_code=400,
+                detail="Upload exactly one file in the 'file' field.",
+            )
+
+        uploaded_file = items[0][1]  # type: ignore[assignment]
+        raw_bytes = await uploaded_file.read(settings.MAX_UPLOAD_BYTES + 1)
+
+        if len(raw_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        if len(raw_bytes) > settings.MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Uploaded file exceeds the maximum allowed size.",
+            )
+
+        file_type = detect_file_type(raw_bytes[:16], uploaded_file.content_type)
+        parsed = await run_isolated_parser(
+            raw_bytes=raw_bytes,
+            file_type=file_type,
+            request=request,
+            extract_image_page_bytes=False,
+        )
+
+        safe_pages = redact_extracted_pages(parsed["pages"])
+        combined_text = "\n".join(
+            p["redacted_text"] for p in safe_pages if p.get("kind") == "text"
+        )
+        det_code, det_label, det_uncertain = detect_document_language(combined_text)
+
+        request_id = getattr(request.state, "request_id", "unknown")
+        return InspectUploadResponse(
+            request_id=request_id,
+            file_type=parsed["file_type"],
+            page_count=parsed["page_count"],
+            has_image_based_content=bool(parsed["has_image_based_content"]),
+            requires_image_confirmation=bool(parsed["requires_image_confirmation"]),
+            detected_language_code=det_code,
+            detected_language_label=det_label,
+            language_detection_uncertain=det_uncertain,
+            pages=safe_pages,
+        )
+    finally:
+        if uploaded_file is not None:
+            try:
+                await uploaded_file.close()
+            except Exception:
+                pass
+        sweep_temp_dir_files(before_tmp)
+
+
 @app.post("/api/analyze", response_model=AnalyzeUploadResponse)
 @limiter.limit(settings.RATE_LIMIT_ANALYZE)
 async def analyze_document(request: Request) -> AnalyzeUploadResponse:
@@ -88,7 +171,8 @@ async def analyze_document(request: Request) -> AnalyzeUploadResponse:
             request, max_bytes=settings.MAX_UPLOAD_BYTES + 65536
         )
 
-        form = await request.form(max_files=1, max_fields=2)
+        allowed_fields = {"image_confirmation", "document_language", "explanation_language"}
+        form = await request.form(max_files=1, max_fields=4)
         items = list(form.multi_items())
 
         file_items = [val for name, val in items if name == "file" and hasattr(val, "read")]
@@ -96,11 +180,20 @@ async def analyze_document(request: Request) -> AnalyzeUploadResponse:
             name: str(val) for name, val in items if name != "file" and not hasattr(val, "read")
         }
 
-        if len(file_items) != 1 or any(k != "image_confirmation" for k in other_fields):
+        if len(file_items) != 1 or any(k not in allowed_fields for k in other_fields):
             raise HTTPException(
                 status_code=400,
-                detail="Upload exactly one file in 'file' and optional 'image_confirmation' field.",
+                detail="Invalid upload fields provided.",
             )
+
+        document_language = other_fields.get("document_language", "auto").strip() or "auto"
+        explanation_language = other_fields.get("explanation_language", "en").strip() or "en"
+
+        # Reject unsupported or unavailable languages before doing any AI processing
+        _, _, explanation_direction = validate_language_selection(
+            document_language=document_language,
+            explanation_language=explanation_language,
+        )
 
         uploaded_file = file_items[0]  # type: ignore[assignment]
         raw_bytes = await uploaded_file.read(settings.MAX_UPLOAD_BYTES + 1)
@@ -136,10 +229,21 @@ async def analyze_document(request: Request) -> AnalyzeUploadResponse:
                 page_dict["image_bytes"] = parsed["pages"][idx]["image_bytes"]
                 page_dict["image_mime_type"] = parsed["pages"][idx].get("image_mime_type")
 
+        combined_text = "\n".join(
+            p["redacted_text"] for p in safe_pages if p.get("kind") == "text"
+        )
+        det_code, det_label, det_uncertain = detect_document_language(combined_text)
+
+        resolved_doc_lang = (
+            det_code if document_language.lower() == "auto" else document_language.lower()
+        )
+
         raw_analysis = await analyze_with_gemini(
             redacted_pages=safe_pages,
             has_image_content=has_image_content,
             image_confirmed=image_confirmed,
+            document_language=document_language,
+            explanation_language=explanation_language,
         )
 
         verified_dict = verify_analysis_items(
@@ -156,6 +260,12 @@ async def analyze_document(request: Request) -> AnalyzeUploadResponse:
             page_count=parsed["page_count"],
             has_image_based_content=has_image_content,
             image_confirmation_provided=image_confirmed,
+            detected_language_code=det_code,
+            detected_language_label=det_label,
+            language_detection_uncertain=det_uncertain,
+            document_language=resolved_doc_lang,
+            explanation_language=explanation_language.lower(),
+            explanation_direction=explanation_direction,  # type: ignore[arg-type]
             pages=safe_pages,
             analysis=verified_analysis,
         )

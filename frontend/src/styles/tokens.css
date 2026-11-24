@@ -1,0 +1,36 @@
+:root {
+  --color-bg: #f8f9fa;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f3f2f1;
+  --color-navy: #0b1f3a;
+  --color-text: #0b0c0c;
+  --color-text-muted: #505a5f;
+  --color-border: #b1b4b6;
+  --color-border-strong: #0b0c0c;
+  --color-action-green: #00703c;
+  --color-action-green-hover: #005a30;
+  --color-focus: #ffdd00;
+  --color-focus-text: #0b0c0c;
+
+  --color-tag-green-bg: #cce2d8;
+  --color-tag-green-text: #005a30;
+  --color-tag-amber-bg: #fff7bf;
+  --color-tag-amber-text: #594d00;
+  --color-tag-red-bg: #f6d7d2;
+  --color-tag-red-text: #942514;
+  --color-tag-grey-bg: #eeefef;
+  --color-tag-grey-text: #383f43;
+  --color-tag-blue-bg: #d2e2f1;
+  --color-tag-blue-text: #144e81;
+
+  --font-sans: "Source Sans 3", "Noto Sans Tamil", "Noto Sans Devanagari", "Noto Sans Bengali", "Noto Sans Telugu", "Noto Sans Arabic", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "Noto Sans Tamil", "Noto Sans Devanagari", "Noto Sans Arabic", ui-monospace, monospace;
+
+  --container-max: 64rem;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --space-5: 2rem;
+  --space-6: 3rem;
+}
