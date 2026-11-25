@@ -1,0 +1,17 @@
+{
+  "case_id": "07_no_fee",
+  "expected_requirements": [
+    "Annual Life Certificate Form LC-2"
+  ],
+  "expected_deadlines": [
+    "28 February 2027"
+  ],
+  "expected_fees": [],
+  "deadline_absent": false,
+  "fee_absent": true,
+  "unreadable": false,
+  "planted_identifiers": [],
+  "expected_non_pii_terms": [
+    "Form LC-2"
+  ]
+}

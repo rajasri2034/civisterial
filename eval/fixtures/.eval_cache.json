@@ -1,0 +1,403 @@
+{
+  "01_short_notice": {
+    "model_used": "gemini-4-hydrogen",
+    "civ_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 1.0,
+      "redaction_fpr": 0.0,
+      "case_id": "01_short_notice"
+    },
+    "base_score": {
+      "req_precision": 0.0,
+      "req_recall": 1.0,
+      "deadline_correct": false,
+      "fee_correct": false,
+      "hallucinated_deadlines": 1,
+      "hallucinated_fees": 1,
+      "unreadable_handled": true,
+      "case_id": "01_short_notice"
+    },
+    "claim_consistency": {
+      "case_id": "01_short_notice",
+      "total_claims": 0,
+      "part_b_caught": 0,
+      "part_b_missed": 0,
+      "manual_review": 0
+    },
+    "redaction_row": null
+  },
+  "02_long_instructions": {
+    "model_used": "gemini-3.1-flash-lite",
+    "civ_score": {
+      "req_precision": 0.4,
+      "req_recall": 0.6666666666666666,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 0.8181818181818182,
+      "redaction_fpr": 0.0,
+      "case_id": "02_long_instructions"
+    },
+    "base_score": {
+      "req_precision": 0.3333333333333333,
+      "req_recall": 0.6666666666666666,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "case_id": "02_long_instructions"
+    },
+    "claim_consistency": {
+      "case_id": "02_long_instructions",
+      "total_claims": 7,
+      "part_b_caught": 2,
+      "part_b_missed": 0,
+      "manual_review": 2
+    },
+    "redaction_row": null
+  },
+  "03_multiple_requirements": {
+    "model_used": "gemini-3.1-flash-lite",
+    "civ_score": {
+      "req_precision": 0.8,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 1.0,
+      "redaction_fpr": 0.0,
+      "case_id": "03_multiple_requirements"
+    },
+    "base_score": {
+      "req_precision": 0.8,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": false,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 1,
+      "unreadable_handled": true,
+      "case_id": "03_multiple_requirements"
+    },
+    "claim_consistency": {
+      "case_id": "03_multiple_requirements",
+      "total_claims": 6,
+      "part_b_caught": 0,
+      "part_b_missed": 0,
+      "manual_review": 0
+    },
+    "redaction_row": null
+  },
+  "04_explicit_deadline": {
+    "model_used": "gemini-3.1-flash-lite",
+    "civ_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 0.8333333333333334,
+      "redaction_fpr": 0.0,
+      "case_id": "04_explicit_deadline"
+    },
+    "base_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "case_id": "04_explicit_deadline"
+    },
+    "claim_consistency": {
+      "case_id": "04_explicit_deadline",
+      "total_claims": 4,
+      "part_b_caught": 1,
+      "part_b_missed": 0,
+      "manual_review": 1
+    },
+    "redaction_row": null
+  },
+  "05_no_deadline": {
+    "model_used": "gemini-3.1-flash-lite",
+    "civ_score": {
+      "req_precision": 0.6666666666666666,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 0.7142857142857143,
+      "redaction_fpr": 0.0,
+      "case_id": "05_no_deadline"
+    },
+    "base_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": false,
+      "fee_correct": true,
+      "hallucinated_deadlines": 1,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "case_id": "05_no_deadline"
+    },
+    "claim_consistency": {
+      "case_id": "05_no_deadline",
+      "total_claims": 4,
+      "part_b_caught": 2,
+      "part_b_missed": 0,
+      "manual_review": 2
+    },
+    "redaction_row": null
+  },
+  "06_fees_with_late_fee": {
+    "model_used": "gemini-3.1-flash-lite",
+    "civ_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 0.7142857142857143,
+      "redaction_fpr": 0.0,
+      "case_id": "06_fees_with_late_fee"
+    },
+    "base_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "case_id": "06_fees_with_late_fee"
+    },
+    "claim_consistency": {
+      "case_id": "06_fees_with_late_fee",
+      "total_claims": 5,
+      "part_b_caught": 2,
+      "part_b_missed": 0,
+      "manual_review": 2
+    },
+    "redaction_row": null
+  },
+  "07_no_fee": {
+    "model_used": "gemini-3.1-flash-lite",
+    "civ_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 1.0,
+      "redaction_fpr": 0.0,
+      "case_id": "07_no_fee"
+    },
+    "base_score": {
+      "req_precision": 0.5,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": false,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 2,
+      "unreadable_handled": true,
+      "case_id": "07_no_fee"
+    },
+    "claim_consistency": {
+      "case_id": "07_no_fee",
+      "total_claims": 2,
+      "part_b_caught": 0,
+      "part_b_missed": 0,
+      "manual_review": 0
+    },
+    "redaction_row": null
+  },
+  "08_ambiguous_date": {
+    "model_used": "gemini-3.1-flash-lite",
+    "civ_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 1.0,
+      "redaction_fpr": 0.0,
+      "case_id": "08_ambiguous_date"
+    },
+    "base_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "case_id": "08_ambiguous_date"
+    },
+    "claim_consistency": {
+      "case_id": "08_ambiguous_date",
+      "total_claims": 3,
+      "part_b_caught": 0,
+      "part_b_missed": 0,
+      "manual_review": 0
+    },
+    "redaction_row": null
+  },
+  "09_scanned_low_quality": {
+    "model_used": "gemini-3.1-flash-lite",
+    "civ_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 0.0,
+      "redaction_fpr": 1.0,
+      "case_id": "09_scanned_low_quality"
+    },
+    "base_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "case_id": "09_scanned_low_quality"
+    },
+    "claim_consistency": {
+      "case_id": "09_scanned_low_quality",
+      "total_claims": 4,
+      "part_b_caught": 0,
+      "part_b_missed": 0,
+      "manual_review": 4
+    },
+    "redaction_row": null
+  },
+  "10_prompt_injection": {
+    "model_used": "gemini-3.1-flash-lite",
+    "civ_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 0.8333333333333334,
+      "redaction_fpr": 0.0,
+      "case_id": "10_prompt_injection"
+    },
+    "base_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "case_id": "10_prompt_injection"
+    },
+    "claim_consistency": {
+      "case_id": "10_prompt_injection",
+      "total_claims": 4,
+      "part_b_caught": 1,
+      "part_b_missed": 0,
+      "manual_review": 1
+    },
+    "redaction_row": null
+  },
+  "11_blurry_unreadable_image": {
+    "model_used": "gemini-3.1-flash-lite",
+    "civ_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 1.0,
+      "redaction_fpr": 0.0,
+      "case_id": "11_blurry_unreadable_image"
+    },
+    "base_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "case_id": "11_blurry_unreadable_image"
+    },
+    "claim_consistency": {
+      "case_id": "11_blurry_unreadable_image",
+      "total_claims": 0,
+      "part_b_caught": 0,
+      "part_b_missed": 0,
+      "manual_review": 0
+    },
+    "redaction_row": null
+  },
+  "12_planted_identifiers": {
+    "model_used": "gemini-3.1-flash-lite",
+    "civ_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": true,
+      "fee_correct": true,
+      "hallucinated_deadlines": 0,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "quote_pass_rate": 1.0,
+      "redaction_fpr": 0.3333333333333333,
+      "case_id": "12_planted_identifiers"
+    },
+    "base_score": {
+      "req_precision": 1.0,
+      "req_recall": 1.0,
+      "deadline_correct": false,
+      "fee_correct": true,
+      "hallucinated_deadlines": 1,
+      "hallucinated_fees": 0,
+      "unreadable_handled": true,
+      "case_id": "12_planted_identifiers"
+    },
+    "claim_consistency": {
+      "case_id": "12_planted_identifiers",
+      "total_claims": 4,
+      "part_b_caught": 0,
+      "part_b_missed": 0,
+      "manual_review": 0
+    },
+    "redaction_row": {
+      "case_id": "12_planted_identifiers",
+      "planted_count": 3,
+      "removed_count": 3,
+      "recall": 1.0
+    }
+  }
+}

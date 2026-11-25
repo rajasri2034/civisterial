@@ -1,0 +1,19 @@
+{
+  "case_id": "05_no_deadline",
+  "expected_requirements": [
+    "Membership Card Form L-1",
+    "proof of local address"
+  ],
+  "expected_deadlines": [],
+  "expected_fees": [
+    "Rs. 300"
+  ],
+  "deadline_absent": true,
+  "fee_absent": false,
+  "unreadable": false,
+  "planted_identifiers": [],
+  "expected_non_pii_terms": [
+    "Form L-1",
+    "Rs. 300"
+  ]
+}

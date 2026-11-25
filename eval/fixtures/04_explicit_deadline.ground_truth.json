@@ -1,0 +1,21 @@
+{
+  "case_id": "04_explicit_deadline",
+  "expected_requirements": [
+    "Renewal Form TP-4",
+    "enrollment certificate"
+  ],
+  "expected_deadlines": [
+    "20 December 2026"
+  ],
+  "expected_fees": [
+    "Rs. 150"
+  ],
+  "deadline_absent": false,
+  "fee_absent": false,
+  "unreadable": false,
+  "planted_identifiers": [],
+  "expected_non_pii_terms": [
+    "Form TP-4",
+    "Rs. 150"
+  ]
+}

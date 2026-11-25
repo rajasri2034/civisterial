@@ -1,0 +1,23 @@
+{
+  "case_id": "02_long_instructions",
+  "expected_requirements": [
+    "Form TL-101",
+    "property tax receipt",
+    "fire safety self-declaration"
+  ],
+  "expected_deadlines": [
+    "31 January 2027"
+  ],
+  "expected_fees": [
+    "Rs. 750"
+  ],
+  "deadline_absent": false,
+  "fee_absent": false,
+  "unreadable": false,
+  "planted_identifiers": [],
+  "expected_non_pii_terms": [
+    "Form TL-101",
+    "500 square feet",
+    "14 working days"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "case_id": "12_planted_identifiers",
+  "expected_requirements": [
+    "Correction Form TC-8",
+    "sale deed copy"
+  ],
+  "expected_deadlines": [
+    "15 May 2027"
+  ],
+  "expected_fees": [
+    "Rs. 250"
+  ],
+  "deadline_absent": false,
+  "fee_absent": false,
+  "unreadable": false,
+  "planted_identifiers": [
+    "kavitha.subramanian.synth@example.org",
+    "+91-9840123456",
+    "ABCDE1234F"
+  ],
+  "expected_non_pii_terms": [
+    "Form TC-8",
+    "15 May 2027",
+    "Rs. 250"
+  ]
+}

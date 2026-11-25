@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: civisterial-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log --proxy-headers --forwarded-allow-ips="*"
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /api/languages
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.0
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash
+      - key: GEMINI_FALLBACK_MODEL
+        value: gemini-3.1-flash-lite
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: MAX_UPLOAD_MB
+        value: "10"
+      - key: MAX_PDF_PAGES
+        value: "30"
+      - key: PROCESSING_TIMEOUT_SECONDS
+        value: "30"
+      - key: MOCK_MODE
+        value: "false"

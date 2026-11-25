@@ -1,0 +1,11 @@
+{
+  "case_id": "11_blurry_unreadable_image",
+  "expected_requirements": [],
+  "expected_deadlines": [],
+  "expected_fees": [],
+  "deadline_absent": true,
+  "fee_absent": true,
+  "unreadable": true,
+  "planted_identifiers": [],
+  "expected_non_pii_terms": []
+}

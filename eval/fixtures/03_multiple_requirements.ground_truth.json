@@ -1,0 +1,21 @@
+{
+  "case_id": "03_multiple_requirements",
+  "expected_requirements": [
+    "Grant Application Form H-22",
+    "property ownership deed",
+    "Structural engineer estimate",
+    "utility bill"
+  ],
+  "expected_deadlines": [
+    "15 February 2027"
+  ],
+  "expected_fees": [],
+  "deadline_absent": false,
+  "fee_absent": true,
+  "unreadable": false,
+  "planted_identifiers": [],
+  "expected_non_pii_terms": [
+    "Form H-22",
+    "60 days"
+  ]
+}

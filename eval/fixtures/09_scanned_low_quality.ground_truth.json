@@ -1,0 +1,21 @@
+{
+  "case_id": "09_scanned_low_quality",
+  "expected_requirements": [
+    "Form W-12",
+    "address proof"
+  ],
+  "expected_deadlines": [
+    "25 March 2027"
+  ],
+  "expected_fees": [
+    "Rs. 100"
+  ],
+  "deadline_absent": false,
+  "fee_absent": false,
+  "unreadable": false,
+  "planted_identifiers": [],
+  "expected_non_pii_terms": [
+    "Form W-12",
+    "Rs. 100"
+  ]
+}

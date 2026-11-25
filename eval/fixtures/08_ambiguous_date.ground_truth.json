@@ -1,0 +1,21 @@
+{
+  "case_id": "08_ambiguous_date",
+  "expected_requirements": [
+    "Plot Request Form CG-3"
+  ],
+  "expected_deadlines": [
+    "within 15 days"
+  ],
+  "expected_fees": [
+    "Rs. 250"
+  ],
+  "deadline_absent": false,
+  "fee_absent": false,
+  "unreadable": false,
+  "planted_identifiers": [],
+  "expected_non_pii_terms": [
+    "05/06/2026",
+    "Form CG-3",
+    "Rs. 250"
+  ]
+}

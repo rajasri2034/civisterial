@@ -1,0 +1,23 @@
+{
+  "case_id": "06_fees_with_late_fee",
+  "expected_requirements": [
+    "Pet Registration Form PR-9",
+    "rabies vaccination certificate"
+  ],
+  "expected_deadlines": [
+    "10 January 2027"
+  ],
+  "expected_fees": [
+    "Rs. 200",
+    "Rs. 100"
+  ],
+  "deadline_absent": false,
+  "fee_absent": false,
+  "unreadable": false,
+  "planted_identifiers": [],
+  "expected_non_pii_terms": [
+    "Form PR-9",
+    "Rs. 200",
+    "Rs. 100"
+  ]
+}
