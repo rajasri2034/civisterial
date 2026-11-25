@@ -1,7 +1,8 @@
 # Civisterial — Data Handling & External AI Service Record
-
+## Model Configuration
+- **Production Deployment (Render):** Configured via `GEMINI_MODEL=gemini-3.5-flash` in `render.yaml` and the Render service environment.
+- **Code Fallback Default:** If `GEMINI_MODEL` is unset in local or custom environments, the FastAPI backend (`backend/app/config.py`) defaults to `gemini-2.5-flash`.
 - **External AI Service:** Google Gemini API (`google-genai` Python SDK)
-- **Model Identifier:** Configured via `GEMINI_MODEL` environment variable (default: `gemini-2.5-flash`)
 - **Account / Billing Tier:** not yet verified
 - **Data Logging & Retention Policy (Provider Side):** not yet verified
 - **Date Current Terms Were Checked:** not yet verified

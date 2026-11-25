@@ -1,64 +1,92 @@
-/**
- * Resolve backend API URL from Vite environment configuration.
- * Contains zero API keys or secrets.
- */
-const RAW_API_BASE = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+const DEFAULT_PROD_API_BASE_URL = "https://civisterial-api.onrender.com";
+
+const rawBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").trim();
+
+export const API_BASE_URL = rawBaseUrl
+  ? rawBaseUrl.replace(/\/+$/, "")
+  : import.meta.env.PROD
+    ? DEFAULT_PROD_API_BASE_URL
+    : "";
+
+export const API_ENDPOINTS = {
+  health: "/api/health",
+  languages: "/api/languages",
+  inspect: "/api/inspect",
+  analyze: "/api/analyze",
+};
 
 export function apiUrl(path) {
-  const cleanPath = path.startsWith("/") ? path : `/${path}`;
-  return RAW_API_BASE ? `${RAW_API_BASE}${cleanPath}` : cleanPath;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE_URL}${normalizedPath}`;
 }
 
-/**
- * Map HTTP status codes and backend error categories to plain, friendly user messages.
- * Never exposes stack traces, exception class names, or internal technical details.
- */
-export function mapFriendlyApiError(status, backendMessage = "") {
-  const lower = String(backendMessage || "").toLowerCase();
-
-  if (lower.includes("unreadable") || lower.includes("read this document clearly")) {
-    return "We couldn't read this document clearly. Please upload a higher-quality image or PDF.";
-  }
-
-  if (
-    lower.includes("not contain enough readable information") ||
-    lower.includes("too little") ||
-    lower.includes("empty")
-  ) {
-    return "This document does not contain enough readable information for reliable analysis.";
-  }
-
-  if (status === 429 || lower.includes("rate limit") || lower.includes("too many requests")) {
-    return "Too many documents were submitted in a short time. Please wait a minute and try again.";
-  }
-
-  if (status === 504 || lower.includes("timed out") || lower.includes("took too long")) {
-    return "The analysis took too long to complete. Please try again shortly.";
-  }
-
-  if (status === 413 || lower.includes("maximum allowed size") || lower.includes("10 mb")) {
-    return "The selected file exceeds the 10 MB limit. Please upload a smaller file.";
-  }
-
-  if (status === 400 || status === 422) {
-    // Preserve safe, user-actionable validation guidance while stripping technical tokens
-    if (
-      lower.includes("public or synthetic") ||
-      lower.includes("image_confirmation") ||
-      lower.includes("not currently supported") ||
-      lower.includes("pdf, png, or jpeg") ||
-      lower.includes("encrypted") ||
-      lower.includes("password") ||
-      lower.includes("page")
-    ) {
-      return backendMessage;
+export function mapFriendlyApiError(statusOrError, fallbackDetail = "") {
+  if (statusOrError && typeof statusOrError === "object") {
+    if (statusOrError.name === "AbortError") {
+      return "Analysis was cancelled.";
     }
-    return "We could not process this file. Please check that it is a valid PDF, PNG, or JPEG under 10 MB.";
+    const status = statusOrError.status;
+    const message = statusOrError.message || fallbackDetail;
+    if (status) {
+      return mapFriendlyApiError(status, message);
+    }
+    if (
+      typeof message === "string" &&
+      (message.includes("Failed to fetch") || message.includes("NetworkError"))
+    ) {
+      return "Could not reach the Civisterial server. Please wait a few seconds and try again.";
+    }
+    return message || "An unexpected error occurred while processing the document.";
   }
 
-  if (status >= 500 || status === 502 || status === 503) {
-    return "The analysis service is temporarily unavailable. Please try again in a few moments.";
+  const status = Number(statusOrError);
+  if (status === 400) {
+    return fallbackDetail || "The uploaded file could not be read. Please check the file and try again.";
+  }
+  if (status === 413) {
+    return "This file exceeds the 10 MB upload limit.";
+  }
+  if (status === 415) {
+    return "Unsupported file format. Please upload a PDF, PNG, or JPEG file.";
+  }
+  if (status === 422) {
+    return fallbackDetail || "Invalid request options. Please check your selected languages and file.";
+  }
+  if (status === 429) {
+    return "Too many requests right now. Please wait a moment and try again.";
+  }
+  if (status >= 500) {
+    return fallbackDetail || "The server encountered an error while analyzing the document. Please try again.";
   }
 
-  return "Unable to complete document analysis right now. Please try again.";
+  return fallbackDetail || "An unexpected error occurred while processing the document.";
+}
+
+export async function fetchJson(path, options = {}) {
+  const response = await fetch(apiUrl(path), {
+    ...options,
+    headers: {
+      Accept: "application/json",
+      ...(options.headers || {}),
+    },
+  });
+
+  const contentType = response.headers.get("content-type") || "";
+  const data = contentType.includes("application/json")
+    ? await response.json()
+    : null;
+
+  if (!response.ok) {
+    const detail =
+      (data && (data.detail || data.message || data.error)) ||
+      `Request failed with status ${response.status}`;
+    const error = new Error(
+      typeof detail === "string" ? detail : JSON.stringify(detail)
+    );
+    error.status = response.status;
+    error.payload = data;
+    throw error;
+  }
+
+  return data;
 }
