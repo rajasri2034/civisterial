@@ -58,18 +58,16 @@ export function UploadPage({
         issues.push("The selected file must be a PDF, PNG, or JPEG.");
       }
       if (file.size === 0) {
-        issues.push("This document does not contain enough readable information for reliable analysis.");
+        issues.push(
+          "This document does not contain enough readable information for reliable analysis."
+        );
       } else if (file.size > MAX_BYTES) {
         issues.push("The selected file must be smaller than 10 MB.");
       }
     }
 
     const expLangObj = languages.find((l) => l.code === explanationLanguage);
-    if (
-      !expLangObj ||
-      expLangObj.tier === "unavailable" ||
-      !expLangObj.supports_explanation_output
-    ) {
+    if (!expLangObj || !expLangObj.supports_explanation_output) {
       issues.push(
         "The selected explanation language is unsupported. Choose another supported language."
       );
@@ -77,11 +75,7 @@ export function UploadPage({
 
     if (documentLanguage !== "auto") {
       const docLangObj = languages.find((l) => l.code === documentLanguage);
-      if (
-        !docLangObj ||
-        docLangObj.tier === "unavailable" ||
-        !docLangObj.supports_document_input
-      ) {
+      if (!docLangObj || !docLangObj.supports_document_input) {
         issues.push(
           "The selected document language is unsupported. Choose Auto-detect or another supported language."
         );
@@ -214,7 +208,6 @@ export function UploadPage({
         return;
       }
 
-      // Check for empty / too little readable text when no image pages exist
       const totalChars = (inspected.pages || []).reduce(
         (acc, p) => acc + (p.char_count || 0),
         0

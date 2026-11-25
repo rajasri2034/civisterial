@@ -1,9 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 
 function tierBadgeLabel(tier) {
-  if (tier === "verified") return "Verified";
-  if (tier === "experimental") return "Experimental";
-  return "Unavailable";
+  return tier === "validated" ? "Verified check" : "Beta translation";
 }
 
 export function LanguageSelector({
@@ -15,30 +13,60 @@ export function LanguageSelector({
   onDocumentLanguageChange,
   onExplanationLanguageChange,
 }) {
+  const [filterText, setFilterText] = useState("");
+
+  const query = filterText.trim().toLowerCase();
+  const filteredLanguages = query
+    ? languages.filter(
+        (l) =>
+          l.name.toLowerCase().includes(query) ||
+          l.native_name.toLowerCase().includes(query) ||
+          l.code.toLowerCase().includes(query)
+      )
+    : languages;
+
+  // Always keep currently selected language visible in dropdown even when filtering
+  const ensureSelectedIncluded = (selectedCode) => {
+    if (!selectedCode || selectedCode === "auto") return filteredLanguages;
+    const exists = filteredLanguages.some((l) => l.code === selectedCode);
+    if (exists) return filteredLanguages;
+    const found = languages.find((l) => l.code === selectedCode);
+    return found ? [found, ...filteredLanguages] : filteredLanguages;
+  };
+
+  const docOptions = ensureSelectedIncluded(documentLanguage);
+  const expOptions = ensureSelectedIncluded(explanationLanguage);
+
   const selectedExp = languages.find((l) => l.code === explanationLanguage);
-  const selectedDoc =
-    documentLanguage === "auto"
-      ? null
-      : languages.find((l) => l.code === documentLanguage);
-
-  const isExplanationUnsupported =
-    Boolean(explanationLanguage) &&
-    (!selectedExp ||
-      selectedExp.tier === "unavailable" ||
-      !selectedExp.supports_explanation_output);
-
-  const isDocumentUnsupported =
-    documentLanguage !== "auto" &&
-    (!selectedDoc ||
-      selectedDoc.tier === "unavailable" ||
-      !selectedDoc.supports_document_input);
 
   return (
     <section aria-labelledby="language-settings-heading">
       <h2 id="language-settings-heading">Language settings</h2>
-      <p className="gov-inset">
-        Quotes are shown in the original language. Explanations are provided in your selected language.
-      </p>
+
+      <div className="gov-inset" role="note">
+        <p style={{ marginTop: 0 }}>
+          <strong>
+            Civisterial can generate explanations in any language supported by Gemini. Full automated claim-checking is currently calibrated for English, Tamil, and Hindi; other languages show exact quote verification and require manual review of deadlines and mandatory terms.
+          </strong>
+        </p>
+        <p style={{ marginBottom: 0 }}>
+          Quotes are always preserved verbatim in the document&apos;s original language.
+        </p>
+      </div>
+
+      <div className="gov-form-group">
+        <label className="gov-label" htmlFor="language-search-input">
+          Filter languages (by English name, native script, or BCP-47 code)
+        </label>
+        <input
+          id="language-search-input"
+          type="text"
+          className="gov-file-input"
+          placeholder="e.g., Tamil, தமிழ், Hindi, French, te, ar..."
+          value={filterText}
+          onChange={(e) => setFilterText(e.target.value)}
+        />
+      </div>
 
       <div className="gov-language-grid">
         <div className="gov-form-group">
@@ -56,7 +84,7 @@ export function LanguageSelector({
             onChange={(e) => onDocumentLanguageChange(e.target.value)}
           >
             <option value="auto">Auto-detect (default)</option>
-            {languages.map((lang) => (
+            {docOptions.map((lang) => (
               <option key={lang.code} value={lang.code}>
                 {lang.name} ({lang.native_name}) — [{tierBadgeLabel(lang.tier)}]
               </option>
@@ -76,16 +104,6 @@ export function LanguageSelector({
               )}
             </p>
           )}
-
-          {isDocumentUnsupported && (
-            <div className="gov-warning-banner" role="alert">
-              <strong>Selected document language is unavailable:</strong>{" "}
-              {selectedDoc
-                ? `${selectedDoc.name} (${selectedDoc.native_name}) is marked unavailable.`
-                : `"${documentLanguage}" is not supported.`}{" "}
-              Civisterial will not silently fall back to English. Please select Auto-detect or another supported language.
-            </div>
-          )}
         </div>
 
         <div className="gov-form-group">
@@ -102,28 +120,24 @@ export function LanguageSelector({
             value={explanationLanguage}
             onChange={(e) => onExplanationLanguageChange(e.target.value)}
           >
-            {languages.map((lang) => (
+            {expOptions.map((lang) => (
               <option key={lang.code} value={lang.code}>
                 {lang.name} ({lang.native_name}) — [{tierBadgeLabel(lang.tier)}]
               </option>
             ))}
           </select>
 
-          {selectedExp && selectedExp.tier === "experimental" && (
+          {selectedExp && (
             <p style={{ marginTop: "0.5rem", marginBottom: 0 }}>
-              <span className="gov-tag gov-tag--amber">Experimental language</span>{" "}
+              <span
+                className={`gov-tag ${
+                  selectedExp.tier === "validated" ? "gov-tag--green" : "gov-tag--amber"
+                }`}
+              >
+                {tierBadgeLabel(selectedExp.tier)}
+              </span>{" "}
               {selectedExp.notes}
             </p>
-          )}
-
-          {isExplanationUnsupported && (
-            <div className="gov-warning-banner" role="alert">
-              <strong>Selected explanation language is unsupported:</strong>{" "}
-              {selectedExp
-                ? `${selectedExp.name} (${selectedExp.native_name}) is currently unavailable.`
-                : `"${explanationLanguage}" is not supported.`}{" "}
-              Civisterial will not silently fall back to English. Please select another supported language.
-            </div>
           )}
         </div>
       </div>

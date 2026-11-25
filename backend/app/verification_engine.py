@@ -1,61 +1,83 @@
-"""Deterministic two-part verification engine for Civisterial.
-
-Honest Limitation Notice:
-- Part A checks only whether a normalized quotation exists in the redacted text of the uploaded
-  document. It never verifies external truth or official authenticity.
-- Part B catches only simple lexical and structural mismatches (missing deadline cues, mismatched
-  currency amounts, or clause-level optional/negated wording on mandatory requirements). Passing
-  Part B is NOT proof that an interpretation is legally or administratively correct.
-"""
-
 import re
-import unicodedata
-from dataclasses import dataclass, field
-from typing import Any, Literal
+from copy import deepcopy
+from typing import Any
 
 from rapidfuzz import fuzz
 
-QuotationStatus = Literal[
-    "exact_quotation_found",
-    "possible_match",
-    "not_found",
-    "needs_user_verification",
-]
+from app.languages import is_validated_language
+from app.schemas import NOT_STATED_SENTINEL
 
-ClaimCheckStatus = Literal[
-    "passed",
-    "failed",
-    "needs_user_verification",
-    "not_applicable",
-]
-
-QUOTATION_DISPLAY_LABELS: dict[QuotationStatus, str] = {
+QUOTATION_LABELS: dict[str, str] = {
     "exact_quotation_found": "Exact quotation found",
     "possible_match": "Possible match: review required",
     "not_found": "Could not verify",
     "needs_user_verification": "Verify against your original document.",
 }
 
-PART_B_LIMITATION_NOTE = (
-    "Automated checks catch only simple text mismatches and cannot prove an interpretation is "
-    "correct. Review all details against your original document."
+QUOTATION_DISPLAY_LABELS = QUOTATION_LABELS
+
+EXPERIMENTAL_CLAIM_NOTE = (
+    "Automated deadline and mandatory-wording checks are not yet calibrated for this language. "
+    "Please verify against the original quote."
 )
 
-# Configurable per-language lexical cues for Part B
+
+class VerificationResult(dict):
+    """Dictionary supporting both dot-attribute access (res.quotation_status) and dict unpacking."""
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        self[name] = value
+
+
+# Calibrated lexical cue dictionaries for Validated Tier languages ("en", "ta", "hi")
 DEADLINE_CUES_BY_LANG: dict[str, tuple[str, ...]] = {
     "en": (
         "by",
         "before",
+        "until",
+        "due",
+        "deadline",
         "no later than",
         "not later than",
-        "on or before",
-        "last date",
-        "due date",
-        "deadline",
         "within",
-        "expires on",
-        "valid until",
-        "submit by",
+        "expires",
+        "expiry",
+        "expiration",
+        "closing date",
+        "last date",
+        "on or before",
+        "must be received",
+        "must be submitted",
+    ),
+    "ta": (
+        "முன்",
+        "முன்பாக",
+        "இறுதி நாள்",
+        "இறுதித் தேதி",
+        "கடைசி தேதி",
+        "கடைசி நாள்",
+        "காலக்கெடு",
+        "உள்",
+        "வரை",
+        "காலாவதி",
+    ),
+    "hi": (
+        "पहले",
+        "पूर्व",
+        "अंतिम तिथि",
+        "आखिरी तारीख",
+        "समय सीमा",
+        "नियत तिथि",
+        "तक",
+        "भीतर",
+        "अंदर",
+        "समाप्ति",
     ),
 }
 
@@ -65,664 +87,675 @@ MANDATORY_CUES_BY_LANG: dict[str, tuple[str, ...]] = {
         "shall",
         "required",
         "mandatory",
-        "compulsory",
         "obligatory",
-        "is required to",
-        "are required to",
+        "need to",
+        "needs to",
+        "have to",
+        "has to",
+        "is to be",
+        "are to be",
+        "compulsory",
+    ),
+    "ta": (
+        "வேண்டும்",
+        "கட்டாயம்",
+        "கட்டாயமாக",
+        "அவசியம்",
+        "சமர்ப்பிக்க வேண்டும்",
+        "இணைக்க வேண்டும்",
+        "வழங்க வேண்டும்",
+    ),
+    "hi": (
+        "अनिवार्य",
+        "आवश्यक",
+        "बाध्यकारी",
+        "जरूरी",
+        "करना होगा",
+        "करना अनिवार्य है",
+        "जमा करना होगा",
     ),
 }
 
 OPTIONAL_OR_NEGATION_CUES_BY_LANG: dict[str, tuple[str, ...]] = {
     "en": (
         "may",
+        "might",
+        "could",
         "optional",
-        "optionally",
         "voluntary",
+        "if applicable",
+        "where applicable",
         "not required",
         "need not",
-        "no need to",
-        "exempt",
-        "exemption",
-        "unless",
-        "except",
+        "do not need",
+        "does not need",
+        "encouraged",
+        "recommended",
         "at your discretion",
-        "if applicable",
+    ),
+    "ta": (
+        "விரும்பினால்",
+        "விருப்பத்திற்குரிய",
+        "தேவையில்லை",
+        "அவசியமில்லை",
+        "பொருந்தினால்",
+        "பரிந்துரைக்கப்படுகிறது",
+    ),
+    "hi": (
+        "वैकल्पिक",
+        "यदि लागू हो",
+        "आवश्यक नहीं",
+        "जरूरी नहीं",
+        "स्वेच्छा से",
+        "सुझाव दिया जाता है",
     ),
 }
 
-_STOPWORDS = frozenset(
+_SMART_CHAR_MAP = str.maketrans(
     {
-        "the",
-        "a",
-        "an",
-        "of",
-        "to",
-        "for",
-        "in",
-        "on",
-        "at",
-        "and",
-        "or",
-        "is",
-        "are",
-        "be",
-        "with",
-        "by",
-        "that",
-        "this",
-        "their",
-        "your",
-        "applicant",
-        "applicants",
-    }
-)
-
-
-@dataclass
-class VerificationResult:
-    quotation_status: QuotationStatus
-    quotation_label: str
-    claim_check: ClaimCheckStatus
-    claim_note: str | None = None
-    actual_page: int | None = None
-    page_corrected: bool = False
-    page_note: str | None = None
-    similarity_score: float = 0.0
-    effective_requirement_status: Literal["mandatory", "optional", "unclear"] | None = None
-
-
-def normalize_text(text: str) -> str:
-    """Normalize text for deterministic comparison:
-    - Unicode NFKC normalization
-    - Smart quotes/apostrophes & dashes normalized to ASCII equivalents
-    - Hyphenation line breaks joined (e.g., 'appli-\\ncation' -> 'application')
-    - Lowercased and whitespace collapsed to single spaces
-    """
-    if not text:
-        return ""
-
-    # 1. Unicode NFKC
-    norm = unicodedata.normalize("NFKC", text)
-
-    # 2. Smart quotes and typographic dashes
-    quote_map = {
         "\u2018": "'",
         "\u2019": "'",
-        "\u201a": "'",
-        "\u201b": "'",
         "\u201c": '"',
         "\u201d": '"',
-        "\u201e": '"',
-        "\u201f": '"',
         "\u2013": "-",
         "\u2014": "-",
         "\u00a0": " ",
     }
-    for src, dst in quote_map.items():
-        norm = norm.replace(src, dst)
+)
 
-    # 3. Remove hyphenation across line breaks: word-\nword -> wordword
-    norm = re.sub(r"([A-Za-z0-9])-\s*[\r\n]+\s*([A-Za-z0-9])", r"\1\2", norm)
-
-    # 4. Lowercase and collapse all whitespace
-    norm = norm.lower()
-    norm = re.sub(r"\s+", " ", norm).strip()
-    return norm
+_CURRENCY_PREFIX_RE = re.compile(
+    r"(?:rs\.?|inr|usd|eur|gbp|cad|aud|₹|\$|€|£)\s*",
+    re.IGNORECASE,
+)
 
 
-def normalize_currency_tokens(text: str) -> str:
-    """Normalize common currency representations for fee matching only (never for display).
-
-    Examples: '₹500', 'Rs. 500', 'Rs 500/-', 'INR 500.00' -> 'inr 500'
-    """
-    norm = normalize_text(text)
-    # Remove trailing '/-' common in Indian fee notices
-    norm = re.sub(r"/-", "", norm)
-    # Remove thousand separators inside numbers: 1,500 -> 1500
-    norm = re.sub(r"(?<=\d),(?=\d{3}\b)", "", norm)
-    # Strip trailing .00 on whole numbers: 500.00 -> 500
-    norm = re.sub(r"\b(\d+)\.00\b", r"\1", norm)
-    # Normalize Indian Rupee variants (₹, rs., rs, inr) -> 'inr '
-    norm = re.sub(r"(?:₹|rs\.?|inr)\s*(?=\d)", "inr ", norm)
-    # Normalize USD/GBP/EUR symbols adjacent to numbers
-    norm = re.sub(r"\$\s*(?=\d)", "usd ", norm)
-    norm = re.sub(r"£\s*(?=\d)", "gbp ", norm)
-    norm = re.sub(r"€\s*(?=\d)", "eur ", norm)
-    norm = re.sub(r"\s+", " ", norm).strip()
-    return norm
+def normalize_for_matching(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = text.translate(_SMART_CHAR_MAP)
+    cleaned = re.sub(r"-\s*\r?\n\s*", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
 
 
-def _best_window_similarity(norm_quote: str, norm_haystack: str) -> float:
-    """Compute rapidfuzz similarity against the best-matching window of norm_haystack."""
-    if not norm_quote or not norm_haystack:
-        return 0.0
-    if norm_quote in norm_haystack:
-        return 100.0
-    # partial_ratio finds the highest-scoring aligned window; ratio compares overall length
-    # Using partial_ratio with length guard prevents tiny fragments from scoring high artificially
-    if len(norm_haystack) < max(1, int(len(norm_quote) * 0.5)):
-        return float(fuzz.ratio(norm_quote, norm_haystack))
-    return float(fuzz.partial_ratio(norm_quote, norm_haystack))
+normalize_text = normalize_for_matching
+
+
+def _normalize_lang_key(lang_code: str) -> str:
+    return (lang_code or "").strip().lower().split("-")[0]
+
+
+def _contains_cue(text_lower: str, cues: tuple[str, ...]) -> bool:
+    for cue in cues:
+        if cue.isascii():
+            if re.search(rf"\b{re.escape(cue)}\b", text_lower):
+                return True
+        elif cue in text_lower:
+            return True
+    return False
+
+
+def _coerce_pages_map(
+    pages_input: dict[int, str] | list[dict[str, Any]] | None,
+) -> tuple[dict[int, str], bool]:
+    if not pages_input:
+        return ({}, False)
+    if isinstance(pages_input, dict):
+        return ({int(k): str(v or "") for k, v in pages_input.items()}, False)
+    pages_map: dict[int, str] = {}
+    has_image = False
+    for p in pages_input:
+        p_num = int(p["page_number"])
+        pages_map[p_num] = str(p.get("redacted_text", ""))
+        if p.get("kind") == "image_based":
+            has_image = True
+    return (pages_map, has_image)
 
 
 def verify_quotation_part_a(
-    evidence: str,
-    stated_page: int | None,
-    pages: list[dict[str, Any]],
+    quote: str = "",
+    pages_by_num: dict[int, str] | list[dict[str, Any]] | None = None,
+    claimed_page: int | None = None,
+    has_image_content: bool = False,
     *,
-    is_scan_or_image: bool = False,
-    ambiguous_or_unclear: bool = False,
-    uncertain_page: bool = False,
+    evidence: str | None = None,
+    pages: dict[int, str] | list[dict[str, Any]] | None = None,
+    stated_page: int | None = None,
+    is_scan_or_image: bool | None = None,
 ) -> VerificationResult:
-    """PART A: Deterministic quotation check against redacted per-page text in memory."""
-    norm_quote = normalize_text(evidence)
+    resolved_quote = evidence if evidence is not None else quote
+    resolved_page = stated_page if stated_page is not None else claimed_page
+    raw_pages_source = pages if pages is not None else pages_by_num
+    pages_map, inferred_image = _coerce_pages_map(raw_pages_source)
+    resolved_image = (
+        is_scan_or_image if is_scan_or_image is not None else (has_image_content or inferred_image)
+    )
 
-    # Empty or whitespace-only quote cannot match
-    if not norm_quote:
-        status: QuotationStatus = (
-            "needs_user_verification"
-            if (is_scan_or_image or ambiguous_or_unclear or uncertain_page)
-            else "not_found"
-        )
-        return VerificationResult(
-            quotation_status=status,
-            quotation_label=QUOTATION_DISPLAY_LABELS[status],
-            claim_check="not_applicable",
-            similarity_score=0.0,
-        )
+    raw_quote = (resolved_quote or "").strip()
+    non_empty_pages = {p: txt for p, txt in pages_map.items() if txt.strip()}
 
-    text_pages: dict[int, str] = {}
-    for p in pages:
-        if p.get("kind") == "text" and p.get("redaction_applied") is True:
-            text_pages[int(p["page_number"])] = normalize_text(p.get("redacted_text") or "")
-
-    whole_doc_norm = "\n".join(text_pages.values())
-
-    # If the input is a scan/image or no text layer exists at all, always require user verification
-    if is_scan_or_image or not text_pages:
+    if not non_empty_pages and resolved_image:
         return VerificationResult(
             quotation_status="needs_user_verification",
-            quotation_label=QUOTATION_DISPLAY_LABELS["needs_user_verification"],
-            claim_check="not_applicable",
-            actual_page=stated_page,
-            page_note="Source is an image or scan; verify directly against your original document.",
+            quotation_label=QUOTATION_LABELS["needs_user_verification"],
+            actual_page=None,
+            page_corrected=False,
+            page_note="Image or scanned input: verify directly against the document.",
             similarity_score=0.0,
         )
 
-    # 1. Exact substring check on stated page (or whole document when page is null)
-    if stated_page is not None:
-        stated_haystack = text_pages.get(stated_page, "")
-        if stated_haystack and norm_quote in stated_haystack:
-            final_status: QuotationStatus = (
-                "needs_user_verification"
-                if (ambiguous_or_unclear or uncertain_page)
-                else "exact_quotation_found"
-            )
-            return VerificationResult(
-                quotation_status=final_status,
-                quotation_label=QUOTATION_DISPLAY_LABELS[final_status],
-                claim_check="not_applicable",
-                actual_page=stated_page,
-                page_corrected=False,
-                similarity_score=100.0,
+    if not raw_quote:
+        return VerificationResult(
+            quotation_status="not_found",
+            quotation_label=QUOTATION_LABELS["not_found"],
+            actual_page=None,
+            page_corrected=False,
+            page_note=None,
+            similarity_score=0.0,
+        )
+
+    norm_quote = normalize_for_matching(raw_quote)
+    if not norm_quote:
+        return VerificationResult(
+            quotation_status="not_found",
+            quotation_label=QUOTATION_LABELS["not_found"],
+            actual_page=None,
+            page_corrected=False,
+            page_note=None,
+            similarity_score=0.0,
+        )
+
+    norm_pages = {p: normalize_for_matching(txt) for p, txt in non_empty_pages.items()}
+    exact_pages = [p for p, norm_txt in norm_pages.items() if norm_quote in norm_txt]
+
+    if exact_pages:
+        if resolved_page is not None and resolved_page in exact_pages:
+            actual_page = resolved_page
+            page_corrected = False
+            page_note = None
+        else:
+            actual_page = exact_pages[0]
+            page_corrected = resolved_page is not None
+            page_note = (
+                f"Located on page {actual_page} (claimed page {resolved_page})."
+                if page_corrected
+                else None
             )
 
-        # Wrong-page search: check if the exact quote exists on another text page
-        for p_num, p_text in sorted(text_pages.items()):
-            if p_num != stated_page and p_text and norm_quote in p_text:
-                final_status = (
-                    "needs_user_verification"
-                    if (ambiguous_or_unclear or uncertain_page)
-                    else "exact_quotation_found"
-                )
-                return VerificationResult(
-                    quotation_status=final_status,
-                    quotation_label=QUOTATION_DISPLAY_LABELS[final_status],
-                    claim_check="not_applicable",
-                    actual_page=p_num,
-                    page_corrected=True,
-                    page_note=(
-                        f"Quote found on page {p_num} instead of page {stated_page}; "
-                        "page reference was not validated."
-                    ),
-                    similarity_score=100.0,
-                )
-    else:
-        # stated_page is None -> check whole document
-        if whole_doc_norm and norm_quote in whole_doc_norm:
-            matched_pages = [p_num for p_num, p_text in sorted(text_pages.items()) if norm_quote in p_text]
-            resolved_page = matched_pages[0] if len(matched_pages) == 1 else None
-            final_status = (
-                "needs_user_verification"
-                if (ambiguous_or_unclear or uncertain_page)
-                else "exact_quotation_found"
-            )
-            return VerificationResult(
-                quotation_status=final_status,
-                quotation_label=QUOTATION_DISPLAY_LABELS[final_status],
-                claim_check="not_applicable",
-                actual_page=resolved_page,
-                page_corrected=False,
-                similarity_score=100.0,
-            )
+        return VerificationResult(
+            quotation_status="exact_quotation_found",
+            quotation_label=QUOTATION_LABELS["exact_quotation_found"],
+            actual_page=actual_page,
+            page_corrected=page_corrected,
+            page_note=page_note,
+            similarity_score=100.0,
+        )
 
-    # 2. Fuzzy similarity check via rapidfuzz (threshold >= 85 -> possible_match, NEVER exact_quotation_found)
     best_score = 0.0
     best_page: int | None = None
-    for p_num, p_text in sorted(text_pages.items()):
-        score = _best_window_similarity(norm_quote, p_text)
+    for p, norm_txt in norm_pages.items():
+        if not norm_txt:
+            continue
+        score = float(fuzz.partial_ratio(norm_quote, norm_txt))
         if score > best_score:
             best_score = score
-            best_page = p_num
+            best_page = p
 
-    if best_score >= 85.0:
-        # Even if fuzzy similarity reaches 100.0 (e.g., punctuation/reordering), NEVER upgrade to exact_quotation_found
-        status_fuzzy: QuotationStatus = (
-            "needs_user_verification"
-            if (ambiguous_or_unclear or uncertain_page)
-            else "possible_match"
+    if best_score >= 85.0 and best_page is not None:
+        page_corrected = resolved_page is not None and resolved_page != best_page
+        page_note = (
+            f"Possible match located on page {best_page} (claimed page {resolved_page})."
+            if page_corrected
+            else None
         )
-        page_was_wrong = stated_page is not None and best_page is not None and best_page != stated_page
         return VerificationResult(
-            quotation_status=status_fuzzy,
-            quotation_label=QUOTATION_DISPLAY_LABELS[status_fuzzy],
-            claim_check="not_applicable",
+            quotation_status="possible_match",
+            quotation_label=QUOTATION_LABELS["possible_match"],
             actual_page=best_page,
-            page_corrected=page_was_wrong,
-            page_note=(
-                f"Closest text match appears on page {best_page} (not page {stated_page})."
-                if page_was_wrong
-                else None
-            ),
+            page_corrected=page_corrected,
+            page_note=page_note,
             similarity_score=round(best_score, 2),
         )
 
     return VerificationResult(
         quotation_status="not_found",
-        quotation_label=QUOTATION_DISPLAY_LABELS["not_found"],
-        claim_check="not_applicable",
+        quotation_label=QUOTATION_LABELS["not_found"],
         actual_page=None,
         page_corrected=False,
+        page_note=None,
         similarity_score=round(best_score, 2),
     )
 
 
-def _split_clauses(norm_quote: str) -> list[str]:
-    """Split a normalized quotation into sentences and semi-colon/independent clauses."""
-    parts = re.split(r"(?<=[.!?;])\s+|\s+(?:however|whereas|provided that)\s+", norm_quote)
-    return [p.strip() for p in parts if p.strip()]
+verify_quotation = verify_quotation_part_a
 
 
-def _content_tokens(text: str) -> set[str]:
-    tokens = set(re.findall(r"[a-z0-9_-]{3,}", normalize_text(text)))
-    return tokens - _STOPWORDS
+def _resolve_part_a_status(
+    part_a_status: str,
+    part_a: dict[str, Any] | None,
+) -> str:
+    if part_a is not None:
+        return str(part_a.get("quotation_status", part_a_status))
+    return part_a_status
 
 
 def verify_deadline_claim_part_b(
-    *,
     date_text: str,
-    ambiguous: bool,
     evidence: str,
-    part_a: VerificationResult,
+    part_a_status: str = "exact_quotation_found",
     lang: str = "en",
+    *,
+    ambiguous: bool = False,
+    part_a: dict[str, Any] | None = None,
 ) -> VerificationResult:
-    """PART B (Deadline): date_text must appear in normalized quote AND quote must have a deadline cue."""
-    if part_a.quotation_status != "exact_quotation_found":
-        part_a.quotation_status = "needs_user_verification"
-        part_a.quotation_label = QUOTATION_DISPLAY_LABELS["needs_user_verification"]
-        part_a.claim_check = "failed" if part_a.quotation_status == "not_found" else "needs_user_verification"
-        part_a.claim_note = (
-            "Deadline cannot be confirmed because an exact quotation was not established. "
-            "Verify against your original document."
+    resolved_status = _resolve_part_a_status(part_a_status, part_a)
+
+    if date_text.strip() in ("NO_DEADLINE", NOT_STATED_SENTINEL):
+        return VerificationResult(
+            quotation_status=resolved_status,
+            quotation_label=QUOTATION_LABELS[resolved_status],
+            claim_check="not_applicable",
+            claim_note=None,
         )
-        return part_a
 
-    if ambiguous:
-        part_a.quotation_status = "needs_user_verification"
-        part_a.quotation_label = QUOTATION_DISPLAY_LABELS["needs_user_verification"]
-        part_a.claim_check = "needs_user_verification"
-        part_a.claim_note = "Date wording is ambiguous. Verify against your original document."
-        return part_a
+    if resolved_status in ("not_found", "needs_user_verification"):
+        return VerificationResult(
+            quotation_status="needs_user_verification",
+            quotation_label=QUOTATION_LABELS["needs_user_verification"],
+            claim_check="not_applicable",
+            claim_note=None,
+        )
 
-    norm_quote = normalize_text(evidence)
-    norm_date = normalize_text(date_text)
-    cues = DEADLINE_CUES_BY_LANG.get(lang, DEADLINE_CUES_BY_LANG["en"])
+    norm_lang = _normalize_lang_key(lang)
+    if not is_validated_language(norm_lang):
+        return VerificationResult(
+            quotation_status="needs_user_verification",
+            quotation_label=QUOTATION_LABELS["needs_user_verification"],
+            claim_check="not_applicable",
+            claim_note=EXPERIMENTAL_CLAIM_NOTE,
+        )
 
-    date_present = bool(norm_date) and (norm_date in norm_quote)
-    cue_present = any(
-        re.search(rf"\b{re.escape(cue)}\b", norm_quote) is not None for cue in cues
+    norm_date = normalize_for_matching(date_text).lower()
+    norm_ev = normalize_for_matching(evidence).lower()
+
+    if not norm_date or norm_date not in norm_ev:
+        note = "Quoted passage does not contain the exact stated date text."
+        return VerificationResult(
+            quotation_status="needs_user_verification",
+            quotation_label=QUOTATION_LABELS["needs_user_verification"],
+            claim_check="failed",
+            claim_note=note,
+        )
+
+    cues = DEADLINE_CUES_BY_LANG.get(norm_lang, DEADLINE_CUES_BY_LANG["en"])
+    if not _contains_cue(norm_ev, cues):
+        note = "Date appears in the quote without clear deadline wording; verify whether this is a true deadline."
+        return VerificationResult(
+            quotation_status="needs_user_verification",
+            quotation_label=QUOTATION_LABELS["needs_user_verification"],
+            claim_check="failed",
+            claim_note=note,
+        )
+
+    return VerificationResult(
+        quotation_status=resolved_status,
+        quotation_label=QUOTATION_LABELS[resolved_status],
+        claim_check="passed",
+        claim_note=None,
     )
 
-    if date_present and cue_present:
-        part_a.claim_check = "passed"
-        part_a.claim_note = (
-            "Date and deadline wording appear in the exact quote; confirm applicability in your original document."
-        )
-        return part_a
 
-    part_a.claim_check = "failed"
-    part_a.quotation_status = "needs_user_verification"
-    part_a.quotation_label = QUOTATION_DISPLAY_LABELS["needs_user_verification"]
-    if not date_present:
-        part_a.claim_note = (
-            "Stated date text was not found verbatim in the supporting quotation. "
-            "Verify against your original document."
-        )
-    else:
-        part_a.claim_note = (
-            "Quote mentions a date without clear deadline wording (such as 'by' or 'before'). "
-            "Verify against your original document."
-        )
-    return part_a
+verify_deadline_claim = verify_deadline_claim_part_b
+
+
+def _normalize_amount_forms(amount: str) -> set[str]:
+    norm = normalize_for_matching(amount).lower()
+    forms = {norm}
+    stripped = _CURRENCY_PREFIX_RE.sub("", norm).strip()
+    if stripped:
+        forms.add(stripped)
+        forms.add(stripped.replace(",", ""))
+        if stripped.endswith(".00"):
+            forms.add(stripped[:-3])
+            forms.add(stripped[:-3].replace(",", ""))
+    return {f for f in forms if f}
 
 
 def verify_fee_claim_part_b(
-    *,
     amount: str,
     evidence: str,
-    part_a: VerificationResult,
-) -> VerificationResult:
-    """PART B (Fee): currency-normalized amount must appear in the exact quote."""
-    if part_a.quotation_status != "exact_quotation_found":
-        part_a.quotation_status = "needs_user_verification"
-        part_a.quotation_label = QUOTATION_DISPLAY_LABELS["needs_user_verification"]
-        part_a.claim_check = "failed"
-        part_a.claim_note = (
-            "Fee amount cannot be confirmed without an exact supporting quotation. "
-            "Verify against your original document."
-        )
-        return part_a
-
-    norm_amount = normalize_currency_tokens(amount)
-    norm_quote = normalize_currency_tokens(evidence)
-
-    if norm_amount and re.search(rf"(?<![a-z0-9]){re.escape(norm_amount)}(?![a-z0-9])", norm_quote):
-        part_a.claim_check = "passed"
-        part_a.claim_note = (
-            "Fee amount matches the exact quote; confirm whether exemptions or conditions apply."
-        )
-        return part_a
-
-    part_a.claim_check = "failed"
-    part_a.quotation_status = "needs_user_verification"
-    part_a.quotation_label = QUOTATION_DISPLAY_LABELS["needs_user_verification"]
-    part_a.claim_note = (
-        "Stated fee amount was not found in the supporting quotation. "
-        "Verify against your original document."
-    )
-    return part_a
-
-
-def verify_mandatory_requirement_claim_part_b(
+    part_a_status: str = "exact_quotation_found",
     *,
-    requirement_item: str,
-    declared_status: Literal["mandatory", "optional", "unclear"],
-    evidence: str,
-    part_a: VerificationResult,
-    lang: str = "en",
+    part_a: dict[str, Any] | None = None,
 ) -> VerificationResult:
-    """PART B (Mandatory Requirement):
-    - Only applies when declared_status == 'mandatory' (otherwise claim_check='not_applicable').
-    - Mandatory wording must appear in the SAME clause/sentence that describes this specific
-      requirement, without negation, exception, or optional modals ('may', 'optional', etc.).
-    - If relationship is unclear or optional wording applies, returns needs_user_verification
-      and downgrades effective_requirement_status to 'unclear' (never 'mandatory').
-    """
-    if declared_status != "mandatory":
-        part_a.claim_check = "not_applicable"
-        part_a.effective_requirement_status = declared_status
-        if declared_status == "unclear":
-            part_a.quotation_status = "needs_user_verification"
-            part_a.quotation_label = QUOTATION_DISPLAY_LABELS["needs_user_verification"]
-        return part_a
+    resolved_status = _resolve_part_a_status(part_a_status, part_a)
 
-    if part_a.quotation_status != "exact_quotation_found":
-        part_a.quotation_status = "needs_user_verification"
-        part_a.quotation_label = QUOTATION_DISPLAY_LABELS["needs_user_verification"]
-        part_a.claim_check = "failed"
-        part_a.effective_requirement_status = "unclear"
-        part_a.claim_note = (
-            "Mandatory status cannot be confirmed without an exact quotation. "
-            "Verify against your original document."
+    if amount.strip() in ("NO_FEE", NOT_STATED_SENTINEL):
+        return VerificationResult(
+            quotation_status=resolved_status,
+            quotation_label=QUOTATION_LABELS[resolved_status],
+            claim_check="not_applicable",
+            claim_note=None,
         )
-        return part_a
 
-    norm_quote = normalize_text(evidence)
-    clauses = _split_clauses(norm_quote)
-    item_tokens = _content_tokens(requirement_item)
-
-    mandatory_cues = MANDATORY_CUES_BY_LANG.get(lang, MANDATORY_CUES_BY_LANG["en"])
-    opt_neg_cues = OPTIONAL_OR_NEGATION_CUES_BY_LANG.get(
-        lang, OPTIONAL_OR_NEGATION_CUES_BY_LANG["en"]
-    )
-
-    # Identify clauses that actually refer to this specific requirement item
-    matching_clauses: list[str] = []
-    if item_tokens:
-        scored: list[tuple[int, str]] = []
-        for clause in clauses:
-            overlap = len(item_tokens & _content_tokens(clause))
-            if overlap > 0:
-                scored.append((overlap, clause))
-        if scored:
-            max_overlap = max(s[0] for s in scored)
-            matching_clauses = [c for ov, c in scored if ov == max_overlap]
-    else:
-        matching_clauses = clauses
-
-    if not matching_clauses:
-        part_a.claim_check = "needs_user_verification"
-        part_a.quotation_status = "needs_user_verification"
-        part_a.quotation_label = QUOTATION_DISPLAY_LABELS["needs_user_verification"]
-        part_a.effective_requirement_status = "unclear"
-        part_a.claim_note = (
-            "Could not link mandatory wording in the quote directly to this requirement. "
-            "Verify against your original document."
+    if resolved_status in ("not_found", "needs_user_verification"):
+        return VerificationResult(
+            quotation_status="needs_user_verification",
+            quotation_label=QUOTATION_LABELS["needs_user_verification"],
+            claim_check="not_applicable",
+            claim_note=None,
         )
-        return part_a
 
-    # Inspect the target clause(s) for optional/negation cues vs mandatory cues
-    target_text = " ".join(matching_clauses)
-    has_optional_or_negation = any(
-        re.search(rf"\b{re.escape(cue)}\b", target_text) is not None for cue in opt_neg_cues
-    )
-    has_mandatory = any(
-        re.search(rf"\b{re.escape(cue)}\b", target_text) is not None for cue in mandatory_cues
-    )
+    norm_ev = normalize_for_matching(evidence).lower()
+    norm_ev_no_commas = norm_ev.replace(",", "")
+    candidate_forms = _normalize_amount_forms(amount)
 
-    if has_optional_or_negation or not has_mandatory:
-        part_a.claim_check = "failed"
-        part_a.quotation_status = "needs_user_verification"
-        part_a.quotation_label = QUOTATION_DISPLAY_LABELS["needs_user_verification"]
-        part_a.effective_requirement_status = "unclear"
-        part_a.claim_note = (
-            "Supporting clause uses optional, conditional, or non-mandatory wording. "
-            "Shown as unclear—verify against your original document."
+    matched = any(
+        (form in norm_ev or form in norm_ev_no_commas) for form in candidate_forms
+    )
+    if not matched:
+        note = "Stated fee amount could not be confirmed verbatim inside the quoted passage."
+        return VerificationResult(
+            quotation_status="needs_user_verification",
+            quotation_label=QUOTATION_LABELS["needs_user_verification"],
+            claim_check="failed",
+            claim_note=note,
         )
-        return part_a
 
-    part_a.claim_check = "passed"
-    part_a.effective_requirement_status = "mandatory"
-    part_a.claim_note = (
-        "Mandatory wording appears in the matching clause; automated checks cannot prove legal "
-        "interpretation—verify against your original document."
+    return VerificationResult(
+        quotation_status=resolved_status,
+        quotation_label=QUOTATION_LABELS[resolved_status],
+        claim_check="passed",
+        claim_note=None,
     )
-    return part_a
+
+
+verify_fee_claim = verify_fee_claim_part_b
+
+
+def _select_relevant_clause(evidence: str, requirement_item: str) -> str:
+    sentences = [s.strip() for s in re.split(r"[.!?।]+", evidence) if s.strip()]
+    if len(sentences) <= 1 or not requirement_item.strip():
+        return evidence
+    item_words = {
+        w
+        for w in re.findall(r"[a-zA-Z\u0900-\u097F\u0B80-\u0BFF]{3,}", requirement_item.lower())
+        if w not in {"the", "and", "for", "with", "pay", "submit"}
+    }
+    if not item_words:
+        return evidence
+    best_sent = evidence
+    best_overlap = 0
+    for sent in sentences:
+        sent_low = sent.lower()
+        overlap = sum(1 for w in item_words if w in sent_low)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_sent = sent
+    return best_sent if best_overlap > 0 else evidence
+
+
+def verify_requirement_claim_part_b(
+    status: str = "mandatory",
+    evidence: str = "",
+    part_a_status: str = "exact_quotation_found",
+    lang: str = "en",
+    *,
+    requirement_item: str = "",
+    declared_status: str | None = None,
+    part_a: dict[str, Any] | None = None,
+) -> VerificationResult:
+    effective_status = declared_status if declared_status is not None else status
+    resolved_status = _resolve_part_a_status(part_a_status, part_a)
+
+    if resolved_status == "not_found":
+        downgraded = "unclear" if effective_status == "mandatory" else effective_status
+        return VerificationResult(
+            status=downgraded,
+            effective_status=downgraded,
+            effective_requirement_status=downgraded,
+            quotation_status="needs_user_verification",
+            quotation_label=QUOTATION_LABELS["needs_user_verification"],
+            claim_check="failed",
+            claim_note="Quoted passage was not found in the document.",
+        )
+
+    if resolved_status == "needs_user_verification":
+        return VerificationResult(
+            status=effective_status,
+            effective_status=effective_status,
+            effective_requirement_status=effective_status,
+            quotation_status="needs_user_verification",
+            quotation_label=QUOTATION_LABELS["needs_user_verification"],
+            claim_check="not_applicable",
+            claim_note=None,
+        )
+
+    if effective_status != "mandatory":
+        return VerificationResult(
+            status=effective_status,
+            effective_status=effective_status,
+            effective_requirement_status=effective_status,
+            quotation_status=resolved_status,
+            quotation_label=QUOTATION_LABELS[resolved_status],
+            claim_check="passed",
+            claim_note=None,
+        )
+
+    norm_lang = _normalize_lang_key(lang)
+    if not is_validated_language(norm_lang):
+        return VerificationResult(
+            status=effective_status,
+            effective_status=effective_status,
+            effective_requirement_status=effective_status,
+            quotation_status="needs_user_verification",
+            quotation_label=QUOTATION_LABELS["needs_user_verification"],
+            claim_check="not_applicable",
+            claim_note=EXPERIMENTAL_CLAIM_NOTE,
+        )
+
+    target_clause = _select_relevant_clause(evidence, requirement_item)
+    norm_ev = normalize_for_matching(target_clause).lower()
+    mandatory_cues = MANDATORY_CUES_BY_LANG.get(norm_lang, MANDATORY_CUES_BY_LANG["en"])
+    optional_cues = OPTIONAL_OR_NEGATION_CUES_BY_LANG.get(
+        norm_lang, OPTIONAL_OR_NEGATION_CUES_BY_LANG["en"]
+    )
+
+    has_mandatory = _contains_cue(norm_ev, mandatory_cues)
+    has_optional_or_neg = _contains_cue(norm_ev, optional_cues)
+
+    if has_optional_or_neg or not has_mandatory:
+        note = "Quoted passage lacks unambiguous mandatory wording or contains conditional/optional terms."
+        return VerificationResult(
+            status="unclear",
+            effective_status="unclear",
+            effective_requirement_status="unclear",
+            quotation_status="needs_user_verification",
+            quotation_label=QUOTATION_LABELS["needs_user_verification"],
+            claim_check="failed",
+            claim_note=note,
+        )
+
+    return VerificationResult(
+        status="mandatory",
+        effective_status="mandatory",
+        effective_requirement_status="mandatory",
+        quotation_status=resolved_status,
+        quotation_label=QUOTATION_LABELS[resolved_status],
+        claim_check="passed",
+        claim_note=None,
+    )
+
+
+verify_requirement_claim = verify_requirement_claim_part_b
+verify_mandatory_requirement_claim_part_b = verify_requirement_claim_part_b
+
+
+def _apply_part_a_only(
+    item: dict[str, Any],
+    quote_field: str,
+    pages_by_num: dict[int, str],
+    has_image_content: bool,
+) -> dict[str, Any]:
+    out = dict(item)
+    for field in (
+        "quotation_status",
+        "quotation_label",
+        "claim_check",
+        "claim_note",
+        "actual_page",
+        "page_corrected",
+        "page_note",
+        "similarity_score",
+    ):
+        out.pop(field, None)
+
+    quote_val = (out.get(quote_field) or "").strip()
+    if not quote_val and out.get("value") == NOT_STATED_SENTINEL:
+        non_empty_pages = {p: txt for p, txt in pages_by_num.items() if txt.strip()}
+        status = (
+            "needs_user_verification"
+            if (not non_empty_pages and has_image_content)
+            else "not_found"
+        )
+        out["quotation_status"] = status
+        out["quotation_label"] = QUOTATION_LABELS[status]
+        out["claim_check"] = "not_applicable"
+        out["claim_note"] = None
+        out["actual_page"] = None
+        out["page_corrected"] = False
+        out["page_note"] = None
+        out["similarity_score"] = 0.0
+        return out
+
+    part_a = verify_quotation_part_a(
+        quote=quote_val,
+        pages_by_num=pages_by_num,
+        claimed_page=out.get("page"),
+        has_image_content=has_image_content,
+    )
+    out.update(part_a)
+    out["claim_check"] = "not_applicable"
+    out["claim_note"] = None
+    return out
 
 
 def verify_analysis_items(
-    analysis_dict: dict[str, Any],
+    raw_analysis: dict[str, Any],
     redacted_pages: list[dict[str, Any]],
-    *,
     has_image_content: bool = False,
     lang: str = "en",
 ) -> dict[str, Any]:
-    """Run Part A and Part B across all structured items in a GeminiDocumentAnalysis payload.
+    """Run deterministic Part A and Part B verification across all extracted items."""
+    verified = deepcopy(raw_analysis)
+    pages_by_num: dict[int, str] = {
+        int(p["page_number"]): str(p.get("redacted_text", ""))
+        for p in redacted_pages
+    }
 
-    - Runs strictly against in-memory redacted_pages (never restores PII placeholders).
-    - Overwrites/populates quotation_status and claim_check exclusively in code; any AI-supplied
-      status fields are ignored/stripped.
-    """
-    is_scan_only = has_image_content and not any(
-        p.get("kind") == "text" and p.get("redaction_applied") is True for p in redacted_pages
-    )
-
-    def _apply_part_a_dict(
-        evidence: str,
-        page: int | None,
-        *,
-        ambiguous_or_unclear: bool = False,
-    ) -> VerificationResult:
-        # If document has mixed image + text pages and page is None or points to an image page, treat as scan/uncertain
-        page_is_image = False
-        if page is not None:
-            for p in redacted_pages:
-                if int(p["page_number"]) == int(page) and p.get("kind") != "text":
-                    page_is_image = True
-                    break
-        elif has_image_content:
-            page_is_image = True
-
-        return verify_quotation_part_a(
-            evidence=evidence,
-            stated_page=page,
-            pages=redacted_pages,
-            is_scan_or_image=is_scan_only or page_is_image,
-            ambiguous_or_unclear=ambiguous_or_unclear,
-            uncertain_page=False,
-        )
-
-    def _attach_result(target: dict[str, Any], vr: VerificationResult) -> dict[str, Any]:
-        # Strip any AI-injected verification fields before writing deterministic results
-        cleaned = {
-            k: v
-            for k, v in target.items()
-            if k
-            not in (
-                "quotation_status",
-                "quotation_label",
-                "claim_check",
-                "claim_note",
-                "actual_page",
-                "page_corrected",
-                "page_note",
-                "similarity_score",
-            )
-        }
-        cleaned["quotation_status"] = vr.quotation_status
-        cleaned["quotation_label"] = vr.quotation_label
-        cleaned["claim_check"] = vr.claim_check
-        cleaned["claim_note"] = vr.claim_note
-        cleaned["actual_page"] = vr.actual_page
-        cleaned["page_corrected"] = vr.page_corrected
-        cleaned["page_note"] = vr.page_note
-        cleaned["similarity_score"] = vr.similarity_score
-        if vr.effective_requirement_status is not None and "status" in cleaned:
-            cleaned["status"] = vr.effective_requirement_status
-        return cleaned
-
-    out = dict(analysis_dict)
-
-    # Metadata fields (Part A only; Part B is not_applicable)
     for meta_key in ("document_title", "issuing_authority", "document_type"):
-        meta_obj = out.get(meta_key)
-        if isinstance(meta_obj, dict):
-            ev = meta_obj.get("evidence", "")
-            pg = meta_obj.get("page")
-            if meta_obj.get("value") == "Not stated in the document." or not ev.strip():
-                vr = VerificationResult(
-                    quotation_status="not_found",
-                    quotation_label=QUOTATION_DISPLAY_LABELS["not_found"],
-                    claim_check="not_applicable",
-                )
-            else:
-                vr = _apply_part_a_dict(ev, pg)
-                vr.claim_check = "not_applicable"
-            out[meta_key] = _attach_result(meta_obj, vr)
+        if meta_key in verified and isinstance(verified[meta_key], dict):
+            verified[meta_key] = _apply_part_a_only(
+                verified[meta_key], "evidence", pages_by_num, has_image_content
+            )
 
-    # Simplified passages (Part A only; Part B is not_applicable)
-    verified_passages = []
-    for item in out.get("simplified_passages", []):
-        vr = _apply_part_a_dict(item.get("original", ""), item.get("page"))
-        vr.claim_check = "not_applicable"
-        vr.claim_note = "Plain-language wording is for convenience; review the original quote."
-        verified_passages.append(_attach_result(item, vr))
-    out["simplified_passages"] = verified_passages
+    verified["simplified_passages"] = [
+        _apply_part_a_only(item, "original", pages_by_num, has_image_content)
+        for item in verified.get("simplified_passages", [])
+    ]
 
-    # Action steps (Part A only; Part B is not_applicable)
-    verified_steps = []
-    for item in out.get("action_steps", []):
-        vr = _apply_part_a_dict(item.get("evidence", ""), item.get("page"))
-        vr.claim_check = "not_applicable"
-        vr.claim_note = "Interpretation and ordering of steps are left for user review."
-        verified_steps.append(_attach_result(item, vr))
-    out["action_steps"] = verified_steps
+    verified["action_steps"] = [
+        _apply_part_a_only(item, "evidence", pages_by_num, has_image_content)
+        for item in verified.get("action_steps", [])
+    ]
 
-    # Requirements (Part A + Part B for mandatory items)
-    verified_reqs = []
-    for item in out.get("requirements", []):
-        decl_status = item.get("status", "unclear")
-        vr = _apply_part_a_dict(
-            item.get("evidence", ""),
-            item.get("page"),
-            ambiguous_or_unclear=(decl_status == "unclear"),
+    verified_deadlines: list[dict[str, Any]] = []
+    for d in verified.get("deadlines", []):
+        item = dict(d)
+        part_a = verify_quotation_part_a(
+            quote=item.get("evidence", ""),
+            pages_by_num=pages_by_num,
+            claimed_page=item.get("page"),
+            has_image_content=has_image_content,
         )
-        vr = verify_mandatory_requirement_claim_part_b(
-            requirement_item=item.get("item", ""),
-            declared_status=decl_status,
+        item.update(part_a)
+        part_b = verify_deadline_claim_part_b(
+            date_text=item.get("date_text", ""),
             evidence=item.get("evidence", ""),
-            part_a=vr,
+            part_a_status=part_a["quotation_status"],
             lang=lang,
         )
-        verified_reqs.append(_attach_result(item, vr))
-    out["requirements"] = verified_reqs
+        item["quotation_status"] = part_b["quotation_status"]
+        item["quotation_label"] = part_b["quotation_label"]
+        item["claim_check"] = part_b["claim_check"]
+        item["claim_note"] = part_b["claim_note"]
+        verified_deadlines.append(item)
+    verified["deadlines"] = verified_deadlines
 
-    # Deadlines (Part A + Part B)
-    verified_deadlines = []
-    for item in out.get("deadlines", []):
-        date_txt = item.get("date_text", "")
-        is_ambig = bool(item.get("ambiguous", False))
-        if date_txt.strip() in ("NO_DEADLINE", "Not stated in the document."):
-            vr = VerificationResult(
-                quotation_status="not_found",
-                quotation_label=QUOTATION_DISPLAY_LABELS["not_found"],
-                claim_check="not_applicable",
-            )
-        else:
-            vr = _apply_part_a_dict(
-                item.get("evidence", ""),
-                item.get("page"),
-                ambiguous_or_unclear=is_ambig,
-            )
-            vr = verify_deadline_claim_part_b(
-                date_text=date_txt,
-                ambiguous=is_ambig,
-                evidence=item.get("evidence", ""),
-                part_a=vr,
-                lang=lang,
-            )
-        verified_deadlines.append(_attach_result(item, vr))
-    out["deadlines"] = verified_deadlines
+    verified_fees: list[dict[str, Any]] = []
+    for f in verified.get("fees", []):
+        item = dict(f)
+        part_a = verify_quotation_part_a(
+            quote=item.get("evidence", ""),
+            pages_by_num=pages_by_num,
+            claimed_page=item.get("page"),
+            has_image_content=has_image_content,
+        )
+        item.update(part_a)
+        part_b = verify_fee_claim_part_b(
+            amount=item.get("amount", ""),
+            evidence=item.get("evidence", ""),
+            part_a_status=part_a["quotation_status"],
+        )
+        item["quotation_status"] = part_b["quotation_status"]
+        item["quotation_label"] = part_b["quotation_label"]
+        item["claim_check"] = part_b["claim_check"]
+        item["claim_note"] = part_b["claim_note"]
+        verified_fees.append(item)
+    verified["fees"] = verified_fees
 
-    # Fees (Part A + Part B)
-    verified_fees = []
-    for item in out.get("fees", []):
-        amt = item.get("amount", "")
-        if amt.strip() in ("NO_FEE", "Not stated in the document."):
-            vr = VerificationResult(
-                quotation_status="not_found",
-                quotation_label=QUOTATION_DISPLAY_LABELS["not_found"],
-                claim_check="not_applicable",
-            )
-        else:
-            vr = _apply_part_a_dict(item.get("evidence", ""), item.get("page"))
-            vr = verify_fee_claim_part_b(
-                amount=amt,
-                evidence=item.get("evidence", ""),
-                part_a=vr,
-            )
-        verified_fees.append(_attach_result(item, vr))
-    out["fees"] = verified_fees
+    verified_reqs: list[dict[str, Any]] = []
+    for r in verified.get("requirements", []):
+        item = dict(r)
+        part_a = verify_quotation_part_a(
+            quote=item.get("evidence", ""),
+            pages_by_num=pages_by_num,
+            claimed_page=item.get("page"),
+            has_image_content=has_image_content,
+        )
+        item.update(part_a)
+        part_b = verify_requirement_claim_part_b(
+            status=item.get("status", "unclear"),
+            evidence=item.get("evidence", ""),
+            part_a_status=part_a["quotation_status"],
+            lang=lang,
+            requirement_item=item.get("item", ""),
+        )
+        item["status"] = part_b["status"]
+        item["quotation_status"] = part_b["quotation_status"]
+        item["quotation_label"] = part_b["quotation_label"]
+        item["claim_check"] = part_b["claim_check"]
+        item["claim_note"] = part_b["claim_note"]
+        verified_reqs.append(item)
+    verified["requirements"] = verified_reqs
 
-    out["verification_limitation_note"] = PART_B_LIMITATION_NOTE
-    return out
+    if has_image_content:
+        verified["verification_limitation_note"] = (
+            "Image or scanned input: automated quote verification was limited and requires direct user review."
+        )
+    elif not is_validated_language(lang):
+        verified["verification_limitation_note"] = (
+            "Civisterial can generate explanations in any language supported by Gemini. "
+            "Full automated claim-checking is currently calibrated for English, Tamil, and Hindi; "
+            "other languages show exact quote verification and require manual review of deadlines and mandatory terms."
+        )
+    else:
+        verified["verification_limitation_note"] = (
+            "Quotation checks verify whether the quoted text appears in your document. "
+            "Always confirm meaning and official deadlines against your original document."
+        )
+
+    return verified
+
+
+verify_document_analysis = verify_analysis_items

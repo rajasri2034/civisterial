@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -90,12 +91,33 @@ async def list_languages() -> dict[str, object]:
     return {"languages": SUPPORTED_LANGUAGES}
 
 
+async def _run_with_disconnect_guard(request: Request, coro):
+    """Run an async pipeline and immediately cancel it if the client aborts the connection."""
+    work_task = asyncio.create_task(coro)
+
+    async def _watch_disconnect() -> None:
+        while not work_task.done():
+            if await request.is_disconnected():
+                work_task.cancel()
+                return
+            await asyncio.sleep(0.05)
+
+    watcher = asyncio.create_task(_watch_disconnect())
+    try:
+        return await work_task
+    except asyncio.CancelledError:
+        raise HTTPException(status_code=499, detail="Request cancelled by client.")
+    finally:
+        watcher.cancel()
+        try:
+            await watcher
+        except asyncio.CancelledError:
+            pass
+
+
 @app.post("/api/inspect", response_model=InspectUploadResponse)
 @limiter.limit(settings.RATE_LIMIT_ANALYZE)
 async def inspect_document(request: Request) -> InspectUploadResponse:
-    """Local-only pre-check: validates file, redacts text, detects language, and flags image pages
-    without sending anything to Gemini.
-    """
     tmp_dir = ensure_isolated_temp_dir()
     before_tmp = {p.name for p in tmp_dir.iterdir()}
     uploaded_file: UploadFile | None = None
@@ -189,7 +211,6 @@ async def analyze_document(request: Request) -> AnalyzeUploadResponse:
         document_language = other_fields.get("document_language", "auto").strip() or "auto"
         explanation_language = other_fields.get("explanation_language", "en").strip() or "en"
 
-        # Reject unsupported or unavailable languages before doing any AI processing
         _, _, explanation_direction = validate_language_selection(
             document_language=document_language,
             explanation_language=explanation_language,
@@ -210,65 +231,71 @@ async def analyze_document(request: Request) -> AnalyzeUploadResponse:
         file_type = detect_file_type(raw_bytes[:16], uploaded_file.content_type)
         image_confirmation_raw = other_fields.get("image_confirmation")
 
-        parsed = await run_isolated_parser(
-            raw_bytes=raw_bytes,
-            file_type=file_type,
-            request=request,
-            extract_image_page_bytes=bool(image_confirmation_raw and image_confirmation_raw.strip()),
-        )
+        async def _execute_pipeline() -> AnalyzeUploadResponse:
+            parsed = await run_isolated_parser(
+                raw_bytes=raw_bytes,
+                file_type=file_type,
+                request=request,
+                extract_image_page_bytes=bool(
+                    image_confirmation_raw and image_confirmation_raw.strip()
+                ),
+            )
 
-        has_image_content = bool(parsed["has_image_based_content"])
-        image_confirmed = validate_image_confirmation(
-            has_image_content=has_image_content,
-            image_confirmation_raw=image_confirmation_raw,
-        )
+            has_image_content = bool(parsed["has_image_based_content"])
+            image_confirmed = validate_image_confirmation(
+                has_image_content=has_image_content,
+                image_confirmation_raw=image_confirmation_raw,
+            )
 
-        safe_pages = redact_extracted_pages(parsed["pages"])
-        for idx, page_dict in enumerate(safe_pages):
-            if parsed["pages"][idx].get("image_bytes"):
-                page_dict["image_bytes"] = parsed["pages"][idx]["image_bytes"]
-                page_dict["image_mime_type"] = parsed["pages"][idx].get("image_mime_type")
+            safe_pages = redact_extracted_pages(parsed["pages"])
+            for idx, page_dict in enumerate(safe_pages):
+                if parsed["pages"][idx].get("image_bytes"):
+                    page_dict["image_bytes"] = parsed["pages"][idx]["image_bytes"]
+                    page_dict["image_mime_type"] = parsed["pages"][idx].get("image_mime_type")
 
-        combined_text = "\n".join(
-            p["redacted_text"] for p in safe_pages if p.get("kind") == "text"
-        )
-        det_code, det_label, det_uncertain = detect_document_language(combined_text)
+            combined_text = "\n".join(
+                p["redacted_text"] for p in safe_pages if p.get("kind") == "text"
+            )
+            det_code, det_label, det_uncertain = detect_document_language(combined_text)
 
-        resolved_doc_lang = (
-            det_code if document_language.lower() == "auto" else document_language.lower()
-        )
+            resolved_doc_lang = (
+                det_code if document_language.lower() == "auto" else document_language.lower()
+            )
 
-        raw_analysis = await analyze_with_gemini(
-            redacted_pages=safe_pages,
-            has_image_content=has_image_content,
-            image_confirmed=image_confirmed,
-            document_language=document_language,
-            explanation_language=explanation_language,
-        )
+            raw_analysis = await analyze_with_gemini(
+                redacted_pages=safe_pages,
+                has_image_content=has_image_content,
+                image_confirmed=image_confirmed,
+                document_language=document_language,
+                explanation_language=explanation_language,
+            )
 
-        verified_dict = verify_analysis_items(
-            raw_analysis.model_dump(),
-            redacted_pages=safe_pages,
-            has_image_content=has_image_content,
-        )
-        verified_analysis = VerifiedDocumentAnalysis.model_validate(verified_dict)
+            verified_dict = verify_analysis_items(
+                raw_analysis.model_dump(),
+                redacted_pages=safe_pages,
+                has_image_content=has_image_content,
+                lang=resolved_doc_lang,
+            )
+            verified_analysis = VerifiedDocumentAnalysis.model_validate(verified_dict)
 
-        request_id = getattr(request.state, "request_id", "unknown")
-        return AnalyzeUploadResponse(
-            request_id=request_id,
-            file_type=parsed["file_type"],
-            page_count=parsed["page_count"],
-            has_image_based_content=has_image_content,
-            image_confirmation_provided=image_confirmed,
-            detected_language_code=det_code,
-            detected_language_label=det_label,
-            language_detection_uncertain=det_uncertain,
-            document_language=resolved_doc_lang,
-            explanation_language=explanation_language.lower(),
-            explanation_direction=explanation_direction,  # type: ignore[arg-type]
-            pages=safe_pages,
-            analysis=verified_analysis,
-        )
+            request_id = getattr(request.state, "request_id", "unknown")
+            return AnalyzeUploadResponse(
+                request_id=request_id,
+                file_type=parsed["file_type"],
+                page_count=parsed["page_count"],
+                has_image_based_content=has_image_content,
+                image_confirmation_provided=image_confirmed,
+                detected_language_code=det_code,
+                detected_language_label=det_label,
+                language_detection_uncertain=det_uncertain,
+                document_language=resolved_doc_lang,
+                explanation_language=explanation_language.lower(),
+                explanation_direction=explanation_direction,  # type: ignore[arg-type]
+                pages=safe_pages,
+                analysis=verified_analysis,
+            )
+
+        return await _run_with_disconnect_guard(request, _execute_pipeline())
     finally:
         if uploaded_file is not None:
             try:

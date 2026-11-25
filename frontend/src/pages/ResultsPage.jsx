@@ -181,6 +181,18 @@ export function ResultsPage({
         </button>
       </div>
 
+      {/* Multilingual verification calibration & scope notice */}
+      <div className="gov-inset" role="note" aria-label="Verification scope and calibration notice">
+        <p style={{ marginTop: 0 }}>
+          <strong>
+            Civisterial can generate explanations in any language supported by Gemini. Full automated claim-checking is currently calibrated for English, Tamil, and Hindi; other languages show exact quote verification and require manual review of deadlines and mandatory terms.
+          </strong>
+        </p>
+        {analysis.verification_limitation_note && (
+          <p style={{ marginBottom: 0 }}>{analysis.verification_limitation_note}</p>
+        )}
+      </div>
+
       {analysis.readability === "poor" && (
         <div className="gov-warning-banner" role="alert">
           <strong>Low readability warning:</strong> Parts of this document were difficult to read. Check every detail against your original document.
@@ -222,7 +234,13 @@ export function ResultsPage({
                 {result.pages.map((p) => (
                   <tr key={p.page_number}>
                     <td>Page {p.page_number}</td>
-                    <td>{p.kind === "image_based" ? "Image / scanned page" : p.kind === "text" ? "Text page" : "Empty page"}</td>
+                    <td>
+                      {p.kind === "image_based"
+                        ? "Image / scanned page"
+                        : p.kind === "text"
+                        ? "Text page"
+                        : "Empty page"}
+                    </td>
                     <td>
                       {p.kind === "image_based" ? (
                         <span className="gov-tag gov-tag--amber">
